@@ -28,7 +28,7 @@ export const KNIGHT_HP = 3;
 export const MELEE_RANGE = 40;
 export const ARC_WIDTH_DEG = 100;
 export const SWING_DURATION = 0.25;
-export const SWING_COOLDOWN = 0.6;
+export const SWING_COOLDOWN = 0.8;
 export const SWING_ARC_POINTS = 16;
 
 export const UNIT_WANDER_INTERVAL: [number, number] = [1.0, 3.0];
@@ -61,7 +61,8 @@ export const UNIT_STATS = {
     maxSpeed: 1.8,
     detectionRadius: 80,
     maxHp: 1,
-    size: 4
+    size: 4,
+    attackDamage: 1
   },
   tank: {
     cost: 25,
@@ -69,7 +70,8 @@ export const UNIT_STATS = {
     maxSpeed: 0.9,
     detectionRadius: 60,
     maxHp: 3,
-    size: 5
+    size: 5,
+    attackDamage: 1.5
   },
   priest: {
     cost: 20,
@@ -77,7 +79,8 @@ export const UNIT_STATS = {
     maxSpeed: 1.2,
     detectionRadius: 70,
     maxHp: 2,
-    size: 4
+    size: 4,
+    attackDamage: 1.2
   }
 } as const;
 
@@ -101,6 +104,12 @@ export const BACKGROUND_COLOR = '#000000';
 export const KNIGHT_COLOR = '#14C814';
 export const CASTLE_COLOR = '#8200B4';
 export const HUD_COLOR = '#DCDCDC';
+export const HP_BAR_WIDTH = 220;
+export const HP_BAR_HEIGHT = 16;
+export const HP_BAR_BACKGROUND_COLOR = 'rgba(220, 220, 220, 0.2)';
+export const HP_BAR_BORDER_COLOR = 'rgba(220, 220, 220, 0.75)';
+export const HP_BAR_FILL_COLOR = KNIGHT_COLOR;
+export const HP_BAR_TEXT_COLOR = '#061206';
 export const ARC_COLOR = '#DCDCDC';
 export const VICTORY_COLOR = '#50C878';
 export const DEFEAT_COLOR = '#DC3C3C';

@@ -330,10 +330,12 @@ export class World {
     for (let i = 0; i < patchCenters.length; i++) {
       const center = patchCenters[i].clone();
       const radius = 60 + i * 10;
-      const treeCount = 6 + i * 2;
+      const baseTreeCount = 12 + i * 4;
+      const treeCount = baseTreeCount + Math.floor(rand() * 5);
+      const trees: Tree[] = [];
       for (let t = 0; t < treeCount; t++) {
         const angle = rand() * Math.PI * 2;
-        const distance = (rand() * 0.7 + 0.3) * radius;
+        const distance = Math.sqrt(rand()) * radius;
         const offset = new Vector2(Math.cos(angle), Math.sin(angle)).scale(distance);
         offset.x += (rand() - 0.5) * 18;
         offset.y += (rand() - 0.5) * 18;
