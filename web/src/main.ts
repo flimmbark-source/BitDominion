@@ -131,6 +131,7 @@ const UNIT_STATS = {
 } as const;
 
 type UnitType = keyof typeof UNIT_STATS;
+type UnitStats = (typeof UNIT_STATS)[UnitType];
 
 const CHEAPEST_UNIT_COST = Math.min(...Object.values(UNIT_STATS).map((stats) => stats.cost));
 
@@ -153,7 +154,40 @@ const DEFEAT_COLOR = '#DC3C3C';
 
 const CASTLE_COLOR_DEC = hexToRgb(CASTLE_COLOR);
 
+const PATROL_ANCHOR_COUNT = 6;
+const PATROL_ANCHOR_RADIUS = 280;
+const ANCHOR_SUSPICION_DECAY = 1.5;
+const ANCHOR_SUSPICION_MAX = 30;
+const ANCHOR_SIGHTING_BONUS = 10;
+const ANCHOR_SEAL_CHANNEL_RATE = 4;
+
+const KNIGHT_SIGHT_CONFIRM_TIME = 0.5;
+const SEARCH_DURATION = 4;
+const SEARCH_SPIN_SPEED = Math.PI * 1.6;
+const SEARCH_RADIUS_GROWTH = 45;
+
+const NOISE_PING_DURATION = 0.4;
+const NOISE_PING_MIN_RADIUS = 20;
+const NOISE_PING_MAX_RADIUS = 60;
+const NOISE_SPRINT_WINDOW = 0.2;
+const NOISE_INVESTIGATE_RADIUS = 160;
+const NOISE_INVESTIGATE_TIME = 2;
+const NOISE_ATTACK_STRENGTH = 12;
+const NOISE_SEAL_STRENGTH = 10;
+const NOISE_SPRINT_STRENGTH = 6;
+
 type GameState = 'running' | 'victory' | 'defeat';
+
+interface PatrolAnchor {
+  position: Vector2;
+  suspicion: number;
+}
+
+interface NoisePing {
+  position: Vector2;
+  age: number;
+  duration: number;
+}
 
 class Knight {
   public pos = CASTLE_POS.clone().add(new Vector2(0, 120));
@@ -299,6 +333,15 @@ class DarkUnit {
   public damageTimer = 0;
   public alive = true;
   public hp: number;
+  public behavior: 'idle' | 'chasing' | 'searching' | 'investigating' = 'idle';
+
+  private lineOfSightTimer = 0;
+  private searchTimer = 0;
+  private searchAngle = 0;
+  private searchRadius = 0;
+  private searchOrigin: Vector2 | null = null;
+  private investigationTimer = 0;
+  private investigationTarget: Vector2 | null = null;
 
   constructor(public pos: Vector2, public readonly type: UnitType) {
     this.hp = UNIT_STATS[type].maxHp;
@@ -311,14 +354,10 @@ class DarkUnit {
     }
 
     const dtRatio = dt * FPS;
-    this.wanderTimer -= dt;
-    if (this.wanderTimer <= 0) {
-      this._pickNewDirection();
-    }
-
+    const stats = UNIT_STATS[this.type];
     const toKnight = knight.pos.clone().subtract(this.pos);
     const distance = toKnight.length();
-    const stats = UNIT_STATS[this.type];
+    const previouslyDetecting = this.detecting;
     this.detecting = distance <= stats.detectionRadius;
 
     if (this.type === 'priest' && distance <= PRIEST_REVEAL_RADIUS) {
@@ -326,9 +365,38 @@ class DarkUnit {
     }
 
     if (this.detecting && distance > 0) {
-      const speedCap = stats.maxSpeed;
-      const desired = toKnight.normalize().scale(Math.max(this.velocity.length(), speedCap));
-      this.velocity.lerp(desired, UNIT_DETECTION_LERP * dtRatio);
+      this.lineOfSightTimer += dt;
+      if (this.lineOfSightTimer >= KNIGHT_SIGHT_CONFIRM_TIME && this.lineOfSightTimer - dt < KNIGHT_SIGHT_CONFIRM_TIME) {
+        game.registerKnightSighting(knight.pos);
+      }
+      this.behavior = 'chasing';
+      this.searchTimer = SEARCH_DURATION;
+      this.searchOrigin = knight.pos.clone();
+    } else {
+      if (previouslyDetecting && this.behavior === 'chasing') {
+        this._beginSearch(game);
+      }
+      this.lineOfSightTimer = 0;
+    }
+
+    if (this.behavior === 'investigating' && this.detecting) {
+      this.investigationTimer = 0;
+      this.investigationTarget = null;
+    }
+
+    switch (this.behavior) {
+      case 'chasing':
+        this._steerTowards(knight.pos, stats.maxSpeed, dtRatio);
+        break;
+      case 'searching':
+        this._updateSearch(dt, game, stats, dtRatio);
+        break;
+      case 'investigating':
+        this._updateInvestigation(dt, stats, dtRatio);
+        break;
+      default:
+        this._updateIdle(dt, game, stats, dtRatio);
+        break;
     }
 
     this.pos.add(this.velocity.clone().scale(dtRatio));
@@ -345,6 +413,108 @@ class DarkUnit {
     const speed = stats.minSpeed + Math.random() * (stats.maxSpeed - stats.minSpeed);
     this.velocity.set(Math.cos(angle) * speed, Math.sin(angle) * speed);
     this.wanderTimer = UNIT_WANDER_INTERVAL[0] + Math.random() * (UNIT_WANDER_INTERVAL[1] - UNIT_WANDER_INTERVAL[0]);
+  }
+
+  private _steerTowards(target: Vector2, speed: number, dtRatio: number, lerpScale = UNIT_DETECTION_LERP): void {
+    const desired = target.clone().subtract(this.pos);
+    if (desired.lengthSq() === 0) {
+      return;
+    }
+    desired.normalize().scale(speed);
+    const blend = Math.min(1, lerpScale * dtRatio);
+    this.velocity.lerp(desired, blend);
+  }
+
+  private _beginSearch(game: Game): void {
+    const known = game.getLastKnownKnightPos();
+    this.searchOrigin = known ? known.clone() : this.searchOrigin;
+    if (!this.searchOrigin) {
+      this.behavior = 'idle';
+      return;
+    }
+    this.behavior = 'searching';
+    this.searchTimer = SEARCH_DURATION;
+    this.searchAngle = Math.random() * Math.PI * 2;
+    this.searchRadius = 16;
+  }
+
+  private _updateSearch(dt: number, game: Game, stats: UnitStats, dtRatio: number): void {
+    const origin = this.searchOrigin ?? game.getLastKnownKnightPos();
+    if (!origin) {
+      this.behavior = 'idle';
+      return;
+    }
+    this.searchTimer -= dt;
+    if (this.searchTimer <= 0) {
+      this.behavior = 'idle';
+      this.searchOrigin = null;
+      return;
+    }
+    this.searchAngle += SEARCH_SPIN_SPEED * dt;
+    this.searchRadius += SEARCH_RADIUS_GROWTH * dt;
+    const offset = new Vector2(Math.cos(this.searchAngle), Math.sin(this.searchAngle)).scale(this.searchRadius);
+    const target = origin.clone().add(offset);
+    this._steerTowards(target, stats.maxSpeed * 0.9, dtRatio, UNIT_DETECTION_LERP * 0.8);
+  }
+
+  private _updateInvestigation(dt: number, stats: UnitStats, dtRatio: number): void {
+    if (!this.investigationTarget) {
+      this.behavior = 'idle';
+      return;
+    }
+    this.investigationTimer = Math.max(0, this.investigationTimer - dt);
+    if (this.investigationTimer <= 0) {
+      this.behavior = 'idle';
+      this.investigationTarget = null;
+      return;
+    }
+    const distance = this.pos.distanceTo(this.investigationTarget);
+    if (distance < 12) {
+      this.behavior = 'idle';
+      this.investigationTarget = null;
+      return;
+    }
+    this._steerTowards(this.investigationTarget, stats.maxSpeed * 0.75, dtRatio, UNIT_DETECTION_LERP * 0.6);
+  }
+
+  private _updateIdle(dt: number, game: Game, stats: UnitStats, dtRatio: number): void {
+    let followingAnchor = false;
+    if (this.type === 'scout') {
+      const anchor = game.getHighestSuspicionAnchor();
+      if (anchor) {
+        const toAnchor = anchor.position.clone().subtract(this.pos);
+        if (toAnchor.length() > 18) {
+          followingAnchor = true;
+          const speed = Math.min(stats.maxSpeed, Math.max(stats.minSpeed, stats.minSpeed * 1.5));
+          this._steerTowards(anchor.position, speed, dtRatio, UNIT_DETECTION_LERP * 0.5);
+        }
+      }
+    }
+
+    if (!followingAnchor) {
+      this.wanderTimer -= dt;
+      if (this.wanderTimer <= 0) {
+        this._pickNewDirection();
+      }
+    }
+  }
+
+  startInvestigation(position: Vector2): void {
+    if (!this.alive || this.behavior === 'chasing') {
+      return;
+    }
+    this.behavior = 'investigating';
+    this.investigationTimer = NOISE_INVESTIGATE_TIME;
+    this.investigationTarget = position.clone();
+  }
+
+  notifyNoise(position: Vector2): void {
+    if (!this.alive || this.type !== 'scout' || this.behavior !== 'idle') {
+      return;
+    }
+    if (this.pos.distanceTo(position) <= NOISE_INVESTIGATE_RADIUS) {
+      this.startInvestigation(position);
+    }
   }
 
   private _handleBounds(): void {
@@ -567,11 +737,16 @@ class Game {
   public seals: Seal[] = [];
   public brokenSeals = 0;
   public state: GameState = 'running';
-  private patrolAnchors: Vector2[] = [];
+  private anchors: PatrolAnchor[] = [];
   private nextAnchorIndex = 0;
+  private lastKnownKnightPos: Vector2 | null = null;
+  private noisePings: NoisePing[] = [];
+  private debugAnchors = false;
+  private lastPointerTime = 0;
+  private lastPointerPos: Vector2 | null = null;
 
   constructor() {
-    this.patrolAnchors = this._generateAnchors();
+    this.anchors = this._generateAnchors();
     this.seals = this._generateSeals();
     this._spawnInitialUnits(5);
   }
@@ -583,8 +758,13 @@ class Game {
     this.seals = this._generateSeals();
     this.brokenSeals = 0;
     this.state = 'running';
-    this.patrolAnchors = this._generateAnchors();
+    this.anchors = this._generateAnchors();
     this.nextAnchorIndex = 0;
+    this.lastKnownKnightPos = null;
+    this.noisePings = [];
+    this.lastPointerPos = null;
+    this.lastPointerTime = 0;
+    this.debugAnchors = false;
     this._spawnInitialUnits(5);
   }
 
@@ -615,17 +795,42 @@ class Game {
   }
 
   getNextAnchor(): Vector2 {
-    if (this.patrolAnchors.length === 0) {
-      this.patrolAnchors = this._generateAnchors();
+    if (this.anchors.length === 0) {
+      this.anchors = this._generateAnchors();
       this.nextAnchorIndex = 0;
     }
-    const anchor = this.patrolAnchors[this.nextAnchorIndex % this.patrolAnchors.length];
-    this.nextAnchorIndex = (this.nextAnchorIndex + 1) % this.patrolAnchors.length;
-    return anchor.clone();
+    const anchor = this.anchors[this.nextAnchorIndex % this.anchors.length];
+    this.nextAnchorIndex = (this.nextAnchorIndex + 1) % this.anchors.length;
+    return anchor.position.clone();
   }
 
   registerKnightReveal(position: Vector2): void {
     this.darkLord.registerKnightReveal(position);
+  }
+
+  registerKnightSighting(position: Vector2): void {
+    this.lastKnownKnightPos = position.clone();
+    this._increaseSuspicion(position, ANCHOR_SIGHTING_BONUS);
+  }
+
+  getLastKnownKnightPos(): Vector2 | null {
+    return this.lastKnownKnightPos ? this.lastKnownKnightPos.clone() : null;
+  }
+
+  getHighestSuspicionAnchor(): { position: Vector2; suspicion: number } | null {
+    if (!this.anchors.length) {
+      return null;
+    }
+    let mostSuspicious = this.anchors[0];
+    for (let i = 1; i < this.anchors.length; i++) {
+      if (this.anchors[i].suspicion > mostSuspicious.suspicion) {
+        mostSuspicious = this.anchors[i];
+      }
+    }
+    if (mostSuspicious.suspicion <= 0.1) {
+      return null;
+    }
+    return { position: mostSuspicious.position.clone(), suspicion: mostSuspicious.suspicion };
   }
 
   isAnySealChanneling(): boolean {
@@ -643,22 +848,110 @@ class Game {
     }
   }
 
-  private _generateAnchors(): Vector2[] {
-    const offsets = [
-      new Vector2(-200, 0),
-      new Vector2(200, 0),
-      new Vector2(0, -200),
-      new Vector2(0, 200),
-      new Vector2(-150, -150),
-      new Vector2(150, 150),
-      new Vector2(-150, 150),
-      new Vector2(150, -150)
-    ];
-    return offsets.map((offset) =>
-      CASTLE_POS.clone()
-        .add(offset)
-        .clamp(UNIT_SIZE / 2, UNIT_SIZE / 2, WIDTH - UNIT_SIZE / 2, HEIGHT - UNIT_SIZE / 2)
-    );
+  private _generateAnchors(): PatrolAnchor[] {
+    const anchors: PatrolAnchor[] = [];
+    for (let i = 0; i < PATROL_ANCHOR_COUNT; i++) {
+      const angle = (i / PATROL_ANCHOR_COUNT) * Math.PI * 2;
+      const position = CASTLE_POS.clone().add(
+        new Vector2(Math.cos(angle) * PATROL_ANCHOR_RADIUS, Math.sin(angle) * PATROL_ANCHOR_RADIUS)
+      );
+      position.clamp(UNIT_SIZE / 2, UNIT_SIZE / 2, WIDTH - UNIT_SIZE / 2, HEIGHT - UNIT_SIZE / 2);
+      anchors.push({ position, suspicion: 0 });
+    }
+    return anchors;
+  }
+
+  private _increaseSuspicion(position: Vector2, amount: number): void {
+    if (!this.anchors.length || amount <= 0) {
+      return;
+    }
+    for (const anchor of this.anchors) {
+      const weight = 1 / (anchor.position.distanceTo(position) + 1);
+      const nextValue = anchor.suspicion + amount * weight;
+      anchor.suspicion = Math.min(ANCHOR_SUSPICION_MAX, nextValue);
+    }
+  }
+
+  private _updateAnchors(dt: number): void {
+    if (!this.anchors.length) {
+      return;
+    }
+    for (const anchor of this.anchors) {
+      anchor.suspicion = Math.max(0, anchor.suspicion - ANCHOR_SUSPICION_DECAY * dt);
+    }
+  }
+
+  private _emitNoise(position: Vector2, strength: number): void {
+    if (strength <= 0) {
+      return;
+    }
+    const source = position.clone();
+    this.noisePings.push({ position: source.clone(), age: 0, duration: NOISE_PING_DURATION });
+    this._increaseSuspicion(source, strength);
+    for (const unit of this.units) {
+      unit.notifyNoise(source);
+    }
+  }
+
+  private _updateNoise(dt: number): void {
+    if (!this.noisePings.length) {
+      return;
+    }
+    for (const ping of this.noisePings) {
+      ping.age += dt;
+    }
+    this.noisePings = this.noisePings.filter((ping) => ping.age < ping.duration);
+  }
+
+  private _drawNoisePings(ctx: CanvasRenderingContext2D): void {
+    if (!this.noisePings.length) {
+      return;
+    }
+    ctx.save();
+    ctx.strokeStyle = 'rgba(220, 80, 80, 0.6)';
+    ctx.lineWidth = 2;
+    for (const ping of this.noisePings) {
+      const progress = Math.min(1, ping.age / ping.duration);
+      const radius = NOISE_PING_MIN_RADIUS + (NOISE_PING_MAX_RADIUS - NOISE_PING_MIN_RADIUS) * progress;
+      ctx.globalAlpha = 1 - progress;
+      ctx.beginPath();
+      ctx.arc(ping.position.x, ping.position.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private _drawAnchorDebug(ctx: CanvasRenderingContext2D): void {
+    if (!this.anchors.length) {
+      return;
+    }
+    ctx.save();
+    for (const anchor of this.anchors) {
+      ctx.globalAlpha = 0.8;
+      ctx.fillStyle = '#FF8080';
+      ctx.beginPath();
+      ctx.arc(anchor.position.x, anchor.position.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      const barHeight = 20;
+      const barWidth = 4;
+      const clampedSuspicion = Math.min(ANCHOR_SUSPICION_MAX, anchor.suspicion);
+      const ratio = clampedSuspicion / ANCHOR_SUSPICION_MAX;
+
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = '#FF5E5E';
+      ctx.fillRect(anchor.position.x + 6, anchor.position.y - barHeight / 2, barWidth, barHeight);
+
+      ctx.globalAlpha = 0.65;
+      ctx.fillStyle = '#FF3030';
+      ctx.fillRect(
+        anchor.position.x + 6,
+        anchor.position.y + barHeight / 2 - barHeight * ratio,
+        barWidth,
+        barHeight * ratio
+      );
+    }
+    ctx.restore();
   }
 
   private _randomUnitVector(): Vector2 {
@@ -698,7 +991,13 @@ class Game {
   private _updateSeals(dt: number): void {
     for (let i = this.seals.length - 1; i >= 0; i--) {
       const seal = this.seals[i];
-      const { completed } = seal.update(this.knight.pos, dt);
+      const { completed, started } = seal.update(this.knight.pos, dt);
+      if (started) {
+        this._emitNoise(seal.pos, NOISE_SEAL_STRENGTH);
+      }
+      if (seal.channeling) {
+        this._increaseSuspicion(seal.pos, ANCHOR_SEAL_CHANNEL_RATE * dt);
+      }
       if (completed) {
         this.seals.splice(i, 1);
         this.brokenSeals += 1;
@@ -706,11 +1005,34 @@ class Game {
     }
   }
 
-  onPointer(x: number, y: number): void {
+  onPointer(x: number, y: number, timeSeconds?: number): void {
     if (this.state !== 'running') {
       return;
     }
-    this.knight.setTarget(new Vector2(x, y));
+    const target = new Vector2(x, y);
+    if (
+      typeof timeSeconds === 'number' &&
+      this.lastPointerTime > 0 &&
+      timeSeconds - this.lastPointerTime <= NOISE_SPRINT_WINDOW &&
+      this.lastPointerPos &&
+      this.lastPointerPos.distanceTo(target) > 35
+    ) {
+      this._emitNoise(target, NOISE_SPRINT_STRENGTH);
+    }
+
+    this.knight.setTarget(target);
+
+    if (typeof timeSeconds === 'number') {
+      this.lastPointerTime = timeSeconds;
+      this.lastPointerPos = target;
+    } else {
+      this.lastPointerTime = 0;
+      this.lastPointerPos = target;
+    }
+  }
+
+  toggleAnchorDebug(): void {
+    this.debugAnchors = !this.debugAnchors;
   }
 
   update(dt: number): void {
@@ -735,13 +1057,24 @@ class Game {
 
     const hits = this.knight.tryAttack(this.units);
     if (hits.length) {
+      let kills = 0;
       for (const unit of hits) {
+        const wasAlive = unit.alive;
         unit.takeDamage(1);
+        if (wasAlive && !unit.alive) {
+          kills += 1;
+        }
+      }
+      if (kills > 0) {
+        this._emitNoise(this.knight.pos, NOISE_ATTACK_STRENGTH);
       }
       this.units = this.units.filter((unit) => unit.alive);
     }
 
     this.darkLord.update(dt, this);
+
+    this._updateAnchors(dt);
+    this._updateNoise(dt);
 
     this._updateVictory(dt);
   }
@@ -773,6 +1106,12 @@ class Game {
 
     for (const unit of this.units) {
       unit.draw(ctx);
+    }
+
+    this._drawNoisePings(ctx);
+
+    if (this.debugAnchors) {
+      this._drawAnchorDebug(ctx);
     }
 
     this.knight.draw(ctx);
@@ -863,12 +1202,15 @@ canvas.addEventListener('pointerdown', (event) => {
   const scaleY = canvas.height / rect.height;
   const x = (event.clientX - rect.left) * scaleX;
   const y = (event.clientY - rect.top) * scaleY;
-  game.onPointer(x, y);
+  game.onPointer(x, y, event.timeStamp / 1000);
 });
 
 window.addEventListener('keydown', (event) => {
   if (event.key.toLowerCase() === 'r') {
     game.reset();
+  } else if (event.key === 'F1') {
+    event.preventDefault();
+    game.toggleAnchorDebug();
   }
 });
 
