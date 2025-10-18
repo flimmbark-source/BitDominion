@@ -88,17 +88,22 @@ const SWING_DURATION = 0.25;
 const SWING_COOLDOWN = 0.6;
 const SWING_ARC_POINTS = 16;
 
-const UNIT_SIZE = 4;
 const UNIT_WANDER_INTERVAL: [number, number] = [1.0, 3.0];
 const UNIT_DAMAGE_COOLDOWN = 0.5;
 const UNIT_DETECTION_LERP = 0.15;
+const DETECTION_TINT_LERP = 0.22;
 
 const MAX_UNITS = 16;
 const DARK_LORD_ENERGY_PER_SEC = 3;
 const DARK_LORD_SPAWN_INTERVAL = 1.5;
 const DARK_LORD_REVEAL_MEMORY = 6.0;
 const PRIEST_REVEAL_RADIUS = 40;
+const PRIEST_REVEAL_WARMUP = 0.6;
+const PRIEST_REVEAL_DURATION = 1.5;
+const PRIEST_REVEAL_SUSPICION = 18;
 const CASTLE_EDGE_SPAWN_RADIUS = 40;
+const TANK_CHASE_PERSIST_DISTANCE = 120;
+const TANK_KNOCKBACK_STRENGTH = 1.3;
 
 const UNIT_COLORS = {
   scout: { base: '#C82828', alert: '#FF5A5A' },
@@ -112,26 +117,31 @@ const UNIT_STATS = {
     minSpeed: 1.0,
     maxSpeed: 1.8,
     detectionRadius: 80,
-    maxHp: 1
+    maxHp: 1,
+    size: 4
   },
   tank: {
     cost: 25,
     minSpeed: 0.5,
     maxSpeed: 0.9,
     detectionRadius: 60,
-    maxHp: 3
+    maxHp: 3,
+    size: 5
   },
   priest: {
     cost: 20,
     minSpeed: 0.8,
     maxSpeed: 1.2,
     detectionRadius: 70,
-    maxHp: 2
+    maxHp: 2,
+    size: 4
   }
 } as const;
 
 type UnitType = keyof typeof UNIT_STATS;
 type UnitStats = (typeof UNIT_STATS)[UnitType];
+
+const UNIT_MAX_HALF_SIZE = Math.max(...Object.values(UNIT_STATS).map((stats) => stats.size)) / 2;
 
 const CHEAPEST_UNIT_COST = Math.min(...Object.values(UNIT_STATS).map((stats) => stats.cost));
 
@@ -342,6 +352,9 @@ class DarkUnit {
   private searchOrigin: Vector2 | null = null;
   private investigationTimer = 0;
   private investigationTarget: Vector2 | null = null;
+  private detectionTint = 0;
+  private priestProximityTimer = 0;
+  private priestRevealTimer = 0;
 
   constructor(public pos: Vector2, public readonly type: UnitType) {
     this.hp = UNIT_STATS[type].maxHp;
@@ -359,30 +372,37 @@ class DarkUnit {
     const distance = toKnight.length();
     const previouslyDetecting = this.detecting;
     this.detecting = distance <= stats.detectionRadius;
-
-    if (this.type === 'priest' && distance <= PRIEST_REVEAL_RADIUS) {
-      game.registerKnightReveal(this.pos);
-    }
+    const tankCanPersist = this.type === 'tank' && distance <= stats.detectionRadius + TANK_CHASE_PERSIST_DISTANCE;
 
     if (this.detecting && distance > 0) {
       this.lineOfSightTimer += dt;
       if (this.lineOfSightTimer >= KNIGHT_SIGHT_CONFIRM_TIME && this.lineOfSightTimer - dt < KNIGHT_SIGHT_CONFIRM_TIME) {
+        if (this.type === 'scout') {
+          console.log(`[SCOUT] Howl! Knight spotted at (${knight.pos.x.toFixed(0)}, ${knight.pos.y.toFixed(0)})`);
+        }
         game.registerKnightSighting(knight.pos);
       }
       this.behavior = 'chasing';
       this.searchTimer = SEARCH_DURATION;
       this.searchOrigin = knight.pos.clone();
     } else {
-      if (previouslyDetecting && this.behavior === 'chasing') {
+      if (previouslyDetecting && this.behavior === 'chasing' && !tankCanPersist) {
         this._beginSearch(game);
       }
-      this.lineOfSightTimer = 0;
+      if (!tankCanPersist) {
+        this.lineOfSightTimer = 0;
+      } else {
+        this.behavior = 'chasing';
+      }
     }
 
     if (this.behavior === 'investigating' && this.detecting) {
       this.investigationTimer = 0;
       this.investigationTarget = null;
     }
+
+    this._updateDetectionTint(dtRatio);
+    this._updatePriestReveal(dt, distance, knight, game);
 
     switch (this.behavior) {
       case 'chasing':
@@ -479,15 +499,16 @@ class DarkUnit {
 
   private _updateIdle(dt: number, game: Game, stats: UnitStats, dtRatio: number): void {
     let followingAnchor = false;
-    if (this.type === 'scout') {
-      const anchor = game.getHighestSuspicionAnchor();
-      if (anchor) {
-        const toAnchor = anchor.position.clone().subtract(this.pos);
-        if (toAnchor.length() > 18) {
-          followingAnchor = true;
-          const speed = Math.min(stats.maxSpeed, Math.max(stats.minSpeed, stats.minSpeed * 1.5));
-          this._steerTowards(anchor.position, speed, dtRatio, UNIT_DETECTION_LERP * 0.5);
-        }
+    const anchor = game.getHighestSuspicionAnchor();
+    if (anchor) {
+      const toAnchor = anchor.position.clone().subtract(this.pos);
+      const buffer = this.type === 'tank' ? 32 : 18;
+      if (toAnchor.length() > buffer) {
+        followingAnchor = true;
+        const boost = this.type === 'scout' ? 1.5 : this.type === 'priest' ? 1.2 : 1.0;
+        const speed = Math.min(stats.maxSpeed, Math.max(stats.minSpeed, stats.minSpeed * boost));
+        const lerpScale = this.type === 'tank' ? UNIT_DETECTION_LERP * 0.4 : UNIT_DETECTION_LERP * 0.5;
+        this._steerTowards(anchor.position, speed, dtRatio, lerpScale);
       }
     }
 
@@ -518,7 +539,7 @@ class DarkUnit {
   }
 
   private _handleBounds(): void {
-    const half = UNIT_SIZE / 2;
+    const half = this._getHalfSize();
     let bounced = false;
     if (this.pos.x < half) {
       this.pos.x = half;
@@ -541,6 +562,17 @@ class DarkUnit {
     if (bounced) {
       this.velocity.scale(0.9);
     }
+  }
+
+  receiveArcHit(knight: Knight): boolean {
+    if (!this.alive) {
+      return false;
+    }
+    this.takeDamage(1);
+    if (this.type === 'tank') {
+      this._applyTankKnockback(knight);
+    }
+    return !this.alive;
   }
 
   attemptDamage(knight: Knight): boolean {
@@ -567,8 +599,66 @@ class DarkUnit {
       return;
     }
     const colors = UNIT_COLORS[this.type];
-    ctx.fillStyle = this.detecting ? colors.alert : colors.base;
-    ctx.fillRect(this.pos.x - UNIT_SIZE / 2, this.pos.y - UNIT_SIZE / 2, UNIT_SIZE, UNIT_SIZE);
+    const half = this._getHalfSize();
+    const blended = mixColors(colors.base, colors.alert, this.detectionTint);
+    const fill = this.detecting ? mixColors(blended, '#FFFFFF', Math.min(0.5, this.detectionTint * 0.6)) : blended;
+    ctx.fillStyle = fill;
+    ctx.fillRect(this.pos.x - half, this.pos.y - half, half * 2, half * 2);
+
+    if (this.type === 'priest' && this.priestRevealTimer > 0) {
+      const haloStrength = Math.min(1, this.priestRevealTimer / PRIEST_REVEAL_DURATION);
+      ctx.save();
+      ctx.strokeStyle = `rgba(255, 255, 255, ${(0.35 + haloStrength * 0.35).toFixed(2)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(this.pos.x, this.pos.y, half + 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  private _updateDetectionTint(dtRatio: number): void {
+    const target = this.detecting ? 1 : 0;
+    const blend = Math.min(1, DETECTION_TINT_LERP * dtRatio);
+    this.detectionTint += (target - this.detectionTint) * blend;
+    this.detectionTint = Math.max(0, Math.min(1, this.detectionTint));
+  }
+
+  private _updatePriestReveal(dt: number, distance: number, knight: Knight, game: Game): void {
+    if (this.type !== 'priest') {
+      this.priestProximityTimer = 0;
+      this.priestRevealTimer = 0;
+      return;
+    }
+
+    let startedReveal = false;
+    if (distance <= PRIEST_REVEAL_RADIUS) {
+      this.priestProximityTimer = Math.min(PRIEST_REVEAL_WARMUP, this.priestProximityTimer + dt);
+      if (this.priestProximityTimer >= PRIEST_REVEAL_WARMUP) {
+        startedReveal = this.priestRevealTimer <= 0;
+        this.priestRevealTimer = PRIEST_REVEAL_DURATION;
+      }
+    } else {
+      this.priestProximityTimer = Math.max(0, this.priestProximityTimer - dt);
+    }
+
+    if (this.priestRevealTimer > 0) {
+      this.priestRevealTimer = Math.max(0, this.priestRevealTimer - dt);
+      game.registerKnightReveal(knight.pos, { escalateSuspicion: startedReveal });
+    }
+  }
+
+  private _applyTankKnockback(knight: Knight): void {
+    const push = this.pos.clone().subtract(knight.pos);
+    if (push.lengthSq() === 0) {
+      push.set(Math.random() - 0.5, Math.random() - 0.5);
+    }
+    push.normalize().scale(TANK_KNOCKBACK_STRENGTH);
+    this.velocity.add(push);
+  }
+
+  private _getHalfSize(): number {
+    return UNIT_STATS[this.type].size / 2;
   }
 }
 
@@ -776,9 +866,8 @@ class Game {
     if (!this.canSpawnMoreUnits()) {
       return false;
     }
-    const clamped = position
-      .clone()
-      .clamp(UNIT_SIZE / 2, UNIT_SIZE / 2, WIDTH - UNIT_SIZE / 2, HEIGHT - UNIT_SIZE / 2);
+    const half = UNIT_STATS[type].size / 2;
+    const clamped = position.clone().clamp(half, half, WIDTH - half, HEIGHT - half);
     this.units.push(new DarkUnit(clamped, type));
     return true;
   }
@@ -804,7 +893,11 @@ class Game {
     return anchor.position.clone();
   }
 
-  registerKnightReveal(position: Vector2): void {
+  registerKnightReveal(position: Vector2, options?: { escalateSuspicion?: boolean }): void {
+    this.lastKnownKnightPos = position.clone();
+    if (options?.escalateSuspicion ?? true) {
+      this._increaseSuspicion(position, PRIEST_REVEAL_SUSPICION);
+    }
     this.darkLord.registerKnightReveal(position);
   }
 
@@ -855,7 +948,7 @@ class Game {
       const position = CASTLE_POS.clone().add(
         new Vector2(Math.cos(angle) * PATROL_ANCHOR_RADIUS, Math.sin(angle) * PATROL_ANCHOR_RADIUS)
       );
-      position.clamp(UNIT_SIZE / 2, UNIT_SIZE / 2, WIDTH - UNIT_SIZE / 2, HEIGHT - UNIT_SIZE / 2);
+      position.clamp(UNIT_MAX_HALF_SIZE, UNIT_MAX_HALF_SIZE, WIDTH - UNIT_MAX_HALF_SIZE, HEIGHT - UNIT_MAX_HALF_SIZE);
       anchors.push({ position, suspicion: 0 });
     }
     return anchors;
@@ -1060,8 +1153,8 @@ class Game {
       let kills = 0;
       for (const unit of hits) {
         const wasAlive = unit.alive;
-        unit.takeDamage(1);
-        if (wasAlive && !unit.alive) {
+        const died = unit.receiveArcHit(this.knight);
+        if (wasAlive && died) {
           kills += 1;
         }
       }
@@ -1173,6 +1266,23 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
     g: (value >> 8) & 255,
     b: value & 255
   };
+}
+
+function rgbToHex(rgb: { r: number; g: number; b: number }): string {
+  const clamp = (value: number) => Math.max(0, Math.min(255, Math.round(value)));
+  const toHex = (value: number) => clamp(value).toString(16).padStart(2, '0');
+  return `#${toHex(rgb.r)}${toHex(rgb.g)}${toHex(rgb.b)}`;
+}
+
+function mixColors(colorA: string, colorB: string, t: number): string {
+  const clampedT = Math.max(0, Math.min(1, t));
+  const a = hexToRgb(colorA);
+  const b = hexToRgb(colorB);
+  return rgbToHex({
+    r: a.r + (b.r - a.r) * clampedT,
+    g: a.g + (b.g - a.g) * clampedT,
+    b: a.b + (b.b - a.b) * clampedT
+  });
 }
 
 const appRoot = document.querySelector<HTMLDivElement>('#app');
