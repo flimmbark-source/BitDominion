@@ -12,7 +12,14 @@ import {
   CASTLE_WIN_RADIUS,
   DEFEAT_COLOR,
   HEIGHT,
+  HP_BAR_BACKGROUND_COLOR,
+  HP_BAR_BORDER_COLOR,
+  HP_BAR_FILL_COLOR,
+  HP_BAR_HEIGHT,
+  HP_BAR_TEXT_COLOR,
+  HP_BAR_WIDTH,
   HUD_COLOR,
+  KNIGHT_HP,
   MAX_UNITS,
   NOISE_ATTACK_STRENGTH,
   NOISE_PING_DURATION,
@@ -584,11 +591,39 @@ export class Game {
   }
 
   private _drawHud(ctx: CanvasRenderingContext2D): void {
-    ctx.fillStyle = HUD_COLOR;
+    ctx.save();
+
+    const hpBarX = 12;
+    const hpBarY = 12;
+    const hpRatio = Math.max(0, Math.min(1, this.knight.hp / KNIGHT_HP));
+
+    ctx.fillStyle = HP_BAR_BACKGROUND_COLOR;
+    ctx.fillRect(hpBarX, hpBarY, HP_BAR_WIDTH, HP_BAR_HEIGHT);
+
+    if (hpRatio > 0) {
+      ctx.fillStyle = HP_BAR_FILL_COLOR;
+      ctx.fillRect(hpBarX, hpBarY, HP_BAR_WIDTH * hpRatio, HP_BAR_HEIGHT);
+    }
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = HP_BAR_BORDER_COLOR;
+    ctx.strokeRect(hpBarX, hpBarY, HP_BAR_WIDTH, HP_BAR_HEIGHT);
+
+    ctx.font = '14px Consolas, monospace';
+    ctx.fillStyle = HP_BAR_TEXT_COLOR;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`HP ${this.knight.hp}/${KNIGHT_HP}`, hpBarX + HP_BAR_WIDTH / 2, hpBarY + HP_BAR_HEIGHT / 2);
+
+    const statsY = hpBarY + HP_BAR_HEIGHT + 12;
     ctx.font = '18px Consolas, monospace';
+    ctx.fillStyle = HUD_COLOR;
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    const text = `HP: ${this.knight.hp}  Evil: ${this.darkLord.evilEnergy}  Units: ${this.units.length}/${MAX_UNITS}  Seals: ${this.brokenSeals}/${SEAL_COUNT}`;
-    ctx.fillText(text, 12, 12);
+    const statsText = `Evil: ${this.darkLord.evilEnergy}  Units: ${this.units.length}/${MAX_UNITS}  Seals: ${this.brokenSeals}/${SEAL_COUNT}`;
+    ctx.fillText(statsText, hpBarX, statsY);
+
+    ctx.restore();
   }
 
   private _drawOverlay(ctx: CanvasRenderingContext2D, text: string, color: string, subtitle: string): void {
