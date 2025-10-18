@@ -174,7 +174,8 @@ export class DarkUnit {
     }
     if (this.pos.distanceTo(knight.pos) < 6) {
       this.damageTimer = UNIT_DAMAGE_COOLDOWN;
-      knight.hp = Math.max(0, knight.hp - 1);
+      const stats = UNIT_STATS[this.type];
+      knight.hp = Math.max(0, knight.hp - stats.attackDamage);
       return true;
     }
     return false;

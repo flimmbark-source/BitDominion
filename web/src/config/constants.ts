@@ -61,7 +61,8 @@ export const UNIT_STATS = {
     maxSpeed: 1.8,
     detectionRadius: 80,
     maxHp: 1,
-    size: 4
+    size: 4,
+    attackDamage: 1
   },
   tank: {
     cost: 25,
@@ -69,7 +70,8 @@ export const UNIT_STATS = {
     maxSpeed: 0.9,
     detectionRadius: 60,
     maxHp: 3,
-    size: 5
+    size: 5,
+    attackDamage: 1.5
   },
   priest: {
     cost: 20,
@@ -77,7 +79,8 @@ export const UNIT_STATS = {
     maxSpeed: 1.2,
     detectionRadius: 70,
     maxHp: 2,
-    size: 4
+    size: 4,
+    attackDamage: 1.2
   }
 } as const;
 
