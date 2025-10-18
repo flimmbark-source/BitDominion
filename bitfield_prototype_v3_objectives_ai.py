@@ -1,7 +1,7 @@
 import math
 import random
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pygame
 
@@ -70,6 +70,9 @@ VILLAGER_SPEED = 110.0
 VILLAGER_FEAR_RADIUS = 70
 VILLAGER_ARC_RADIUS = 80
 VILLAGER_ROAD_FLEE_TIME = 3.0
+VILLAGER_RESPAWN_INTERVAL = 28.0
+VILLAGER_RESPAWN_VARIANCE = 0.45
+VILLAGER_MANA_REWARD = 18.0
 
 LOS_SAMPLE_STEP = 8
 
@@ -79,6 +82,8 @@ ARENA_PADDING = 40
 MAX_UNITS = 18
 ENERGY_PER_SEC = 3.0
 SPAWN_INTERVAL = 1.5
+UNIT_VILLAGER_HUNT_RADIUS = 320.0
+ENEMY_VILLAGER_ATTACK_COOLDOWN = 0.8
 
 UNIT_DATA = {
     "SCOUT": {
@@ -110,6 +115,9 @@ UNIT_DATA = {
 PRIEST_REVEAL_RADIUS = 40.0
 PRIEST_REVEAL_TIME = 0.6
 PRIEST_REVEAL_DURATION = 1.5
+PRIEST_ATTACK_RANGE = 230.0
+PRIEST_ATTACK_COOLDOWN = 1.8
+PRIEST_ATTACK_DAMAGE = 0.6
 
 SPIRAL_SEARCH_TIME = 4.0
 SPIRAL_RADIUS_SPEED = 35.0
@@ -204,6 +212,8 @@ class Villager:
     road_timer: float = 0.0
     calm_timer: float = 0.0
     was_on_road: bool = False
+    hp: int = 1
+    alive: bool = True
 
     def update(
         self,
@@ -213,6 +223,8 @@ class Villager:
         threats: List["Unit"],
         game: "Game",
     ) -> None:
+        if not self.alive:
+            return
         nearest_threat: Optional[pygame.math.Vector2] = None
         nearest_dist = float("inf")
         for threat in threats:
@@ -326,6 +338,8 @@ class Villager:
             self.wander_target = None
 
     def draw(self, surface: pygame.Surface) -> None:
+        if not self.alive:
+            return
         rect = pygame.Rect(0, 0, 3, 3)
         rect.center = self.pos.xy
         color = (240, 230, 170) if not self.alarmed else (255, 190, 120)
@@ -339,6 +353,8 @@ class Village:
     well: Well
     chests: List[Chest]
     villagers: List[Villager]
+    max_population: int
+    spawn_timer: float = 0.0
     alarm_active: bool = False
 
 
@@ -469,12 +485,21 @@ class World:
                     chests.append(Chest(chest_pos))
             if not chests:
                 continue
-            village = Village(center, huts, Well(well_pos), chests, villagers=[])
             villagers_count = random.randint(3, 6)
+            village = Village(
+                center,
+                huts,
+                Well(well_pos),
+                chests,
+                villagers=[],
+                max_population=villagers_count,
+            )
             for _ in range(villagers_count):
                 hut = random.choice(huts)
                 spawn = pygame.math.Vector2(hut.center)
                 village.villagers.append(Villager(spawn.copy(), spawn.copy(), village))
+            spawn_variation = random.uniform(1.0 - VILLAGER_RESPAWN_VARIANCE, 1.0 + VILLAGER_RESPAWN_VARIANCE)
+            village.spawn_timer = VILLAGER_RESPAWN_INTERVAL * spawn_variation
             villages.append(village)
         return villages
 
@@ -565,7 +590,9 @@ class World:
     # --- Utility helpers ---
     def update(self, dt: float, knight: "Knight", units: List["Unit"], game: "Game") -> None:
         for village in self.villages:
-            for villager in village.villagers:
+            village.villagers = [v for v in village.villagers if v.alive]
+            self._update_population(village, dt)
+            for villager in list(village.villagers):
                 villager.update(dt, self, knight, units, game)
             village.alarm_active = any(v.alarmed for v in village.villagers)
             self._update_well(village, knight, game, dt)
@@ -602,6 +629,31 @@ class World:
             else:
                 chest.open_timer = max(0.0, chest.open_timer - dt * 0.5)
 
+    def _update_population(self, village: Village, dt: float) -> None:
+        alive_villagers = [v for v in village.villagers if v.alive]
+        if len(alive_villagers) < village.max_population:
+            village.spawn_timer = max(0.0, village.spawn_timer - dt)
+            if village.spawn_timer <= 0.0:
+                spawned = self._spawn_villager(village)
+                if spawned is not None:
+                    alive_villagers.append(spawned)
+                variation = random.uniform(1.0 - VILLAGER_RESPAWN_VARIANCE, 1.0 + VILLAGER_RESPAWN_VARIANCE)
+                village.spawn_timer = VILLAGER_RESPAWN_INTERVAL * variation
+        else:
+            village.spawn_timer = min(
+                VILLAGER_RESPAWN_INTERVAL,
+                village.spawn_timer + dt * 0.5,
+            )
+        village.villagers = alive_villagers
+
+    def _spawn_villager(self, village: Village) -> Optional[Villager]:
+        if not village.huts:
+            return None
+        hut = random.choice(village.huts)
+        spawn = pygame.math.Vector2(hut.center)
+        villager = Villager(spawn.copy(), spawn.copy(), village)
+        return villager
+
     def draw_base(self, surface: pygame.Surface) -> None:
         for patch in self.forest_patches:
             for tree in patch.trees:
@@ -632,6 +684,8 @@ class World:
             pygame.draw.rect(surface, color, rect)
         for village in self.villages:
             for villager in village.villagers:
+                if not villager.alive:
+                    continue
                 villager.draw(surface)
 
     def draw_canopy(self, surface: pygame.Surface) -> None:
@@ -785,12 +839,29 @@ class World:
                 return village.center.copy()
         return None
 
+    def nearest_villager(
+        self, pos: pygame.math.Vector2, max_distance: Optional[float] = None
+    ) -> Optional[Villager]:
+        closest: Optional[Villager] = None
+        closest_dist = float("inf")
+        for village in self.villages:
+            for villager in village.villagers:
+                if not villager.alive:
+                    continue
+                dist = villager.pos.distance_to(pos)
+                if max_distance is not None and dist > max_distance:
+                    continue
+                if dist < closest_dist:
+                    closest_dist = dist
+                    closest = villager
+        return closest
+
     def villager_counts(self) -> Tuple[int, int]:
         total = 0
         alarmed = 0
         for village in self.villages:
-            total += len(village.villagers)
-            alarmed += sum(1 for v in village.villagers if v.alarmed)
+            total += sum(1 for v in village.villagers if v.alive)
+            alarmed += sum(1 for v in village.villagers if v.alive and v.alarmed)
         return total, alarmed
 
 @dataclass
@@ -965,6 +1036,9 @@ class Unit:
         self.spiral_angle = 0.0
         self.spiral_radius = 12.0
         self.road_persist = 0.0
+        self.villager_target: Optional[Villager] = None
+        self.villager_attack_cooldown = 0.0
+        self.priest_attack_cooldown = 0.0
 
     def update(
         self,
@@ -973,11 +1047,15 @@ class Unit:
         last_known: Optional[pygame.math.Vector2],
         world: World,
         los_debug: Optional[List[Tuple[Tuple[float, float], Tuple[float, float]]]],
-    ) -> Tuple[bool, bool]:
+    ) -> Tuple[bool, bool, Optional[Villager]]:
         if not self.alive:
-            return False, False
+            return False, False, None
         detected = False
         just_revealed = False
+        killed_villager: Optional[Villager] = None
+
+        self.villager_attack_cooldown = max(0.0, self.villager_attack_cooldown - dt)
+        self.priest_attack_cooldown = max(0.0, self.priest_attack_cooldown - dt)
 
         distance = self.pos.distance_to(knight.pos)
         effective_detection = self.detection
@@ -1006,6 +1084,7 @@ class Unit:
                 self.reveal_timer = max(0.0, self.reveal_timer - dt)
             if self.reveal_active > 0.0:
                 self.reveal_active = max(0.0, self.reveal_active - dt)
+            self._attempt_priest_attack(knight, world, los_clear)
         else:
             self.reveal_timer = max(0.0, self.reveal_timer - dt)
 
@@ -1024,8 +1103,18 @@ class Unit:
         else:
             self.road_persist = max(0.0, self.road_persist - dt)
 
+        if self.state not in ("idle", "hunt"):
+            self.villager_target = None
+
+        handled_hunt = False
+        if self.state in ("idle", "hunt"):
+            handled_hunt, villager_kill = self._update_villager_hunt(dt, world)
+            if villager_kill is not None:
+                killed_villager = villager_kill
+
         if self.state == "idle":
-            self.idle_to_anchor(dt, world)
+            if not handled_hunt:
+                self.idle_to_anchor(dt, world)
         elif self.state == "chase":
             self.chase_target(knight.pos, dt, world)
             self.state_timer = max(0.0, self.state_timer - dt)
@@ -1044,12 +1133,16 @@ class Unit:
                 origin = self.spiral_origin or self.pos
                 offset = pygame.math.Vector2(math.cos(self.spiral_angle), math.sin(self.spiral_angle)) * self.spiral_radius
                 self.chase_target(origin + offset, dt, world)
+        elif self.state == "hunt":
+            if not handled_hunt:
+                self.state = "idle"
+                self.idle_to_anchor(dt, world)
 
         self.pos += self.vel * dt
         self._clamp()
         world.resolve_circle_collisions(self.pos, self.size * 1.4, self.vel)
         world.clamp_to_bounds(self.pos, self.size)
-        return detected, just_revealed
+        return detected, just_revealed, killed_villager
 
     def idle_to_anchor(self, dt: float, world: World) -> None:
         if self.road_persist > 0.0 and self.target in self.anchors:
@@ -1083,6 +1176,47 @@ class Unit:
             self.pos += knock_dir * 6
         if self.hp <= 0:
             self.alive = False
+
+    def _attempt_priest_attack(
+        self, knight: Knight, world: World, los_clear: bool
+    ) -> bool:
+        if self.unit_type != "PRIEST":
+            return False
+        if self.priest_attack_cooldown > 0.0:
+            return False
+        distance = self.pos.distance_to(knight.pos)
+        if distance > PRIEST_ATTACK_RANGE:
+            return False
+        if not los_clear and not world.line_clear(self.pos, knight.pos):
+            return False
+        knight.hp = max(0.0, knight.hp - PRIEST_ATTACK_DAMAGE)
+        self.priest_attack_cooldown = PRIEST_ATTACK_COOLDOWN
+        return True
+
+    def _update_villager_hunt(
+        self, dt: float, world: World
+    ) -> Tuple[bool, Optional[Villager]]:
+        if self.state not in ("idle", "hunt"):
+            return False, None
+        if self.villager_target is None or not self.villager_target.alive:
+            self.villager_target = world.nearest_villager(self.pos, UNIT_VILLAGER_HUNT_RADIUS)
+        if self.villager_target is None:
+            if self.state == "hunt":
+                self.state = "idle"
+            return False, None
+        target_pos = self.villager_target.pos
+        self.state = "hunt"
+        self.chase_target(target_pos, dt, world)
+        killed: Optional[Villager] = None
+        if (
+            self.pos.distance_to(target_pos) <= self.size + 6
+            and self.villager_attack_cooldown <= 0.0
+        ):
+            self.villager_attack_cooldown = ENEMY_VILLAGER_ATTACK_COOLDOWN
+            killed = self.villager_target
+            self.villager_target = None
+            self.state = "idle"
+        return True, killed
 
     def start_spiral(self, last_known: Optional[pygame.math.Vector2]) -> None:
         if last_known is None:
@@ -1173,6 +1307,7 @@ class DarkLordAI:
         self.last_reveal_time = -999.0
         self.alarm_target: Optional[pygame.math.Vector2] = None
         self.alarm_active = False
+        self.last_spawn_type: Optional[str] = None
 
     def update(self, dt: float, knight: Knight, seals: List[Seal], now: float, world: World) -> None:
         self.alarm_target = world.get_alarm_focus()
@@ -1188,50 +1323,46 @@ class DarkLordAI:
         if len(self.units) >= MAX_UNITS:
             return
         seal_channeling = any(seal.channeling for seal in seals)
-        priority: List[str] = []
+        weights: Dict[str, float] = {"SCOUT": 1.0}
         if self.alarm_active:
-            priority.extend(["SCOUT", "SCOUT"])
+            weights["SCOUT"] = weights.get("SCOUT", 0.0) + 0.8
         if seal_channeling:
-            priority.extend(["SCOUT", "SCOUT", "TANK"])
-        elif self.last_reveal_pos is not None and now - self.last_reveal_time < 4.0:
-            priority.extend(["TANK", "PRIEST"])
-        else:
-            priority.append("SCOUT")
-        spawned_any = False
-        for unit_type in priority:
-            if len(self.units) >= MAX_UNITS:
-                break
-            cost = UNIT_DATA[unit_type]["cost"]
-            if self.energy >= cost:
-                spawn_pos = self.choose_spawn_position(unit_type)
-                self.energy -= cost
-                unit = Unit(unit_type, spawn_pos, self.anchors)
-                if seal_channeling and unit_type == "TANK":
-                    closest = min(seals, key=lambda s: s.pos.distance_to(spawn_pos), default=None)
-                    if closest is not None:
-                        unit.state = "investigate"
-                        unit.target = closest.pos.copy()
-                        unit.state_timer = 4.0
-                if unit_type == "SCOUT" and seal_channeling:
-                    unit.state = "investigate"
-                    active = [s for s in seals if s.channeling]
-                    if active:
-                        unit.target = active[0].pos.copy()
-                        unit.state_timer = 3.0
-                if self.last_reveal_pos is not None and now - self.last_reveal_time < 4.0:
-                    unit.state = "investigate"
-                    unit.target = self.last_reveal_pos.copy()
-                    unit.state_timer = 3.5
-                self.units.append(unit)
-                spawned_any = True
-        if (
-            not spawned_any
-            and self.energy >= UNIT_DATA["SCOUT"]["cost"]
-            and len(self.units) < MAX_UNITS
-        ):
-            self.energy -= UNIT_DATA["SCOUT"]["cost"]
-            unit = Unit("SCOUT", self.choose_spawn_position("SCOUT"), self.anchors)
-            self.units.append(unit)
+            weights["TANK"] = weights.get("TANK", 0.0) + 1.4
+        if self.last_reveal_pos is not None and now - self.last_reveal_time < 4.0:
+            weights["PRIEST"] = weights.get("PRIEST", 0.0) + 1.2
+        affordable: Dict[str, float] = {
+            unit_type: weight
+            for unit_type, weight in weights.items()
+            if self.energy >= UNIT_DATA[unit_type]["cost"]
+        }
+        if not affordable:
+            return
+        if len(affordable) > 1 and self.last_spawn_type in affordable:
+            affordable[self.last_spawn_type] *= 0.45
+        choices = list(affordable.keys())
+        chance = list(affordable.values())
+        unit_type = random.choices(choices, weights=chance)[0]
+        spawn_pos = self.choose_spawn_position(unit_type)
+        self.energy -= UNIT_DATA[unit_type]["cost"]
+        unit = Unit(unit_type, spawn_pos, self.anchors)
+        if seal_channeling and unit_type == "TANK":
+            closest = min(seals, key=lambda s: s.pos.distance_to(spawn_pos), default=None)
+            if closest is not None:
+                unit.state = "investigate"
+                unit.target = closest.pos.copy()
+                unit.state_timer = 4.0
+        if unit_type == "SCOUT" and seal_channeling:
+            unit.state = "investigate"
+            active = [s for s in seals if s.channeling]
+            if active:
+                unit.target = active[0].pos.copy()
+                unit.state_timer = 3.0
+        if self.last_reveal_pos is not None and now - self.last_reveal_time < 4.0:
+            unit.state = "investigate"
+            unit.target = self.last_reveal_pos.copy()
+            unit.state_timer = 3.5
+        self.units.append(unit)
+        self.last_spawn_type = unit_type
 
     def choose_spawn_position(self, unit_type: str) -> pygame.math.Vector2:
         if unit_type in ("TANK", "PRIEST") and self.last_reveal_pos is not None and random.random() < 0.6:
@@ -1252,6 +1383,10 @@ class DarkLordAI:
         self.last_reveal_pos = pos.copy()
         self.last_reveal_time = now
         self.anchors.boost_from_pos(pos, SUS_REVEAL_BONUS)
+
+    def on_villager_killed(self, pos: pygame.math.Vector2) -> None:
+        self.energy += VILLAGER_MANA_REWARD
+        self.anchors.boost_sector(pos, 6.0)
 
 
 class Game:
@@ -1330,6 +1465,18 @@ class Game:
                 if unit.pos.distance_to(pos) < 180:
                     unit.investigate(pos)
 
+    def on_villager_killed(self, villager: Villager, unit: Unit) -> None:
+        if not villager.alive:
+            return
+        villager.alive = False
+        village = villager.village
+        if village:
+            village.villagers = [v for v in village.villagers if v.alive]
+            variation = random.uniform(1.0 - VILLAGER_RESPAWN_VARIANCE, 1.0 + VILLAGER_RESPAWN_VARIANCE)
+            village.spawn_timer = VILLAGER_RESPAWN_INTERVAL * variation
+        self.spawn_noise(villager.pos, 0.6)
+        self.ai.on_villager_killed(villager.pos)
+
     def update(self, dt: float, now: float) -> None:
         self.knight.update(dt, self.world)
         self.anchors.decay(dt)
@@ -1354,7 +1501,9 @@ class Game:
         self.los_debug_lines = [] if self.debug_overlay else []
         los_list = self.los_debug_lines if self.debug_overlay else None
         for unit in self.ai.units:
-            detected, just_revealed = unit.update(dt, self.knight, self.last_known_pos, self.world, los_list)
+            detected, just_revealed, killed_villager = unit.update(
+                dt, self.knight, self.last_known_pos, self.world, los_list
+            )
             if detected:
                 self.last_known_pos = self.knight.pos.copy()
                 self.last_known_timer = 4.0
@@ -1363,6 +1512,8 @@ class Game:
                 reveal_triggered = True
                 self.last_known_pos = self.knight.pos.copy()
                 self.last_known_timer = PRIEST_REVEAL_DURATION
+            if killed_villager is not None:
+                self.on_villager_killed(killed_villager, unit)
         if reveal_triggered:
             print("Priest reveal!")
             self.ai.register_reveal(self.knight.pos, now)
