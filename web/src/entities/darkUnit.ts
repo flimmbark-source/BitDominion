@@ -1,7 +1,6 @@
 import {
   DETECTION_TINT_LERP,
   FPS,
-  HEIGHT,
   KNIGHT_SIGHT_CONFIRM_TIME,
   NOISE_INVESTIGATE_RADIUS,
   NOISE_INVESTIGATE_TIME,
@@ -20,12 +19,12 @@ import {
   UNIT_DETECTION_LERP,
   UNIT_STATS,
   UNIT_WANDER_INTERVAL,
-  UnitType,
-  WIDTH
+  UnitType
 } from '../config/constants';
 import { Vector2 } from '../math/vector2';
 import { mixColors } from '../utils/color';
 import type { Game } from '../game';
+import type { World } from '../world';
 import type { Knight } from './knight';
 
 export type DarkUnitBehavior = 'idle' | 'chasing' | 'searching' | 'investigating';
@@ -49,13 +48,14 @@ export class DarkUnit {
   private detectionTint = 0;
   private priestProximityTimer = 0;
   private priestRevealTimer = 0;
+  private roadAssistTimer = 0;
 
   constructor(public pos: Vector2, public readonly type: UnitType) {
     this.hp = UNIT_STATS[type].maxHp;
     this.pickNewDirection();
   }
 
-  update(dt: number, knight: Knight, game: Game): void {
+  update(dt: number, knight: Knight, game: Game, world: World): void {
     if (!this.alive) {
       return;
     }
@@ -65,10 +65,15 @@ export class DarkUnit {
     const toKnight = knight.pos.clone().subtract(this.pos);
     const distance = toKnight.length();
     const previouslyDetecting = this.detecting;
-    this.detecting = distance <= stats.detectionRadius;
-    const tankCanPersist = this.type === 'tank' && distance <= stats.detectionRadius + TANK_CHASE_PERSIST_DISTANCE;
+    const seesKnight = distance <= stats.detectionRadius && world.hasLineOfSight(this.pos, knight.pos);
+    const tankCanPersist = this.canTankPersist(distance, stats);
+    if (seesKnight) {
+      this.detecting = true;
+    } else if (!tankCanPersist) {
+      this.detecting = false;
+    }
 
-    if (this.detecting && distance > 0) {
+    if (seesKnight && distance > 0) {
       this.lineOfSightTimer += dt;
       if (this.lineOfSightTimer >= KNIGHT_SIGHT_CONFIRM_TIME && this.lineOfSightTimer - dt < KNIGHT_SIGHT_CONFIRM_TIME) {
         if (this.type === 'scout') {
@@ -99,13 +104,22 @@ export class DarkUnit {
 
     this.updateDetectionTint(dtRatio);
     this.updatePriestReveal(dt, distance, knight, game);
+    if (this.roadAssistTimer > 0) {
+      this.roadAssistTimer = Math.max(0, this.roadAssistTimer - dt);
+    }
 
     switch (this.behavior) {
       case 'chasing':
-        this.steerTowards(knight.pos, stats.maxSpeed, dtRatio);
+        if (world.isPointOnRoad(this.pos)) {
+          this.roadAssistTimer = Math.max(this.roadAssistTimer, 2);
+        }
+        this.steerTowards(knight.pos, stats.maxSpeed, dtRatio, UNIT_DETECTION_LERP, this.roadAssistTimer > 0);
         break;
       case 'searching':
-        this.updateSearch(dt, game, stats, dtRatio);
+        if (world.isPointOnRoad(this.pos)) {
+          this.roadAssistTimer = Math.max(this.roadAssistTimer, 2);
+        }
+        this.updateSearch(dt, game, stats, dtRatio, world);
         break;
       case 'investigating':
         this.updateInvestigation(dt, stats, dtRatio);
@@ -115,8 +129,10 @@ export class DarkUnit {
         break;
     }
 
+    world.applyTerrainSteering(this, this.getHalfSize(), dt);
     this.pos.add(this.velocity.clone().scale(dtRatio));
-    this.handleBounds();
+    world.resolveStaticCollisions(this.pos, this.getHalfSize());
+    world.constrainToArena(this, this.getHalfSize(), { bounce: true });
 
     if (this.damageTimer > 0) {
       this.damageTimer = Math.max(0, this.damageTimer - dt);
@@ -202,9 +218,23 @@ export class DarkUnit {
     this.wanderTimer = UNIT_WANDER_INTERVAL[0] + Math.random() * (UNIT_WANDER_INTERVAL[1] - UNIT_WANDER_INTERVAL[0]);
   }
 
-  private steerTowards(target: Vector2, maxSpeed: number, dtRatio: number, lerpScale = UNIT_DETECTION_LERP): void {
+  private steerTowards(
+    target: Vector2,
+    maxSpeed: number,
+    dtRatio: number,
+    lerpScale = UNIT_DETECTION_LERP,
+    roadAssist = false
+  ): void {
     const desired = target.clone().subtract(this.pos).normalize().scale(maxSpeed);
-    this.velocity.lerp(desired, Math.min(1, lerpScale * dtRatio));
+    const lerpFactor = Math.min(1, lerpScale * dtRatio * (roadAssist ? 0.65 : 1));
+    this.velocity.lerp(desired, lerpFactor);
+    if (roadAssist) {
+      const currentSpeed = this.velocity.length();
+      if (currentSpeed > 0.0001) {
+        const forward = this.velocity.clone().normalize().scale(Math.max(currentSpeed, maxSpeed * 0.65));
+        this.velocity.lerp(forward, Math.min(1, 0.12 * dtRatio));
+      }
+    }
   }
 
   private updateIdle(dt: number, game: Game, stats: (typeof UNIT_STATS)[keyof typeof UNIT_STATS], dtRatio: number): void {
@@ -234,7 +264,8 @@ export class DarkUnit {
     dt: number,
     game: Game,
     stats: (typeof UNIT_STATS)[keyof typeof UNIT_STATS],
-    dtRatio: number
+    dtRatio: number,
+    world: World
   ): void {
     this.searchTimer = Math.max(0, this.searchTimer - dt);
     if (this.searchTimer === 0 || !this.searchOrigin) {
@@ -244,8 +275,14 @@ export class DarkUnit {
 
     this.searchAngle += SEARCH_SPIN_SPEED * dt;
     this.searchRadius += SEARCH_RADIUS_GROWTH * dt;
-    const target = this.searchOrigin.clone().add(new Vector2(Math.cos(this.searchAngle), Math.sin(this.searchAngle)).scale(this.searchRadius));
-    this.steerTowards(target, stats.maxSpeed * 0.9, dtRatio, UNIT_DETECTION_LERP * 0.6);
+    const target = this.searchOrigin
+      .clone()
+      .add(new Vector2(Math.cos(this.searchAngle), Math.sin(this.searchAngle)).scale(this.searchRadius));
+    const onRoad = world.isPointOnRoad(this.pos);
+    if (onRoad) {
+      this.roadAssistTimer = Math.max(this.roadAssistTimer, 2);
+    }
+    this.steerTowards(target, stats.maxSpeed * 0.9, dtRatio, UNIT_DETECTION_LERP * 0.6, onRoad || this.roadAssistTimer > 0);
 
     if (Math.random() < dt * 0.6) {
       game.registerKnightSighting(target);
@@ -284,30 +321,8 @@ export class DarkUnit {
     this.searchTimer = SEARCH_DURATION;
   }
 
-  private handleBounds(): void {
-    const half = this.getHalfSize();
-    let bounced = false;
-    if (this.pos.x < half) {
-      this.pos.x = half;
-      this.velocity.x *= -1;
-      bounced = true;
-    } else if (this.pos.x > WIDTH - half) {
-      this.pos.x = WIDTH - half;
-      this.velocity.x *= -1;
-      bounced = true;
-    }
-    if (this.pos.y < half) {
-      this.pos.y = half;
-      this.velocity.y *= -1;
-      bounced = true;
-    } else if (this.pos.y > HEIGHT - half) {
-      this.pos.y = HEIGHT - half;
-      this.velocity.y *= -1;
-      bounced = true;
-    }
-    if (bounced) {
-      this.velocity.scale(0.9);
-    }
+  private canTankPersist(distance: number, stats: (typeof UNIT_STATS)[keyof typeof UNIT_STATS]): boolean {
+    return this.type === 'tank' && distance <= stats.detectionRadius + TANK_CHASE_PERSIST_DISTANCE;
   }
 
   private updateDetectionTint(dtRatio: number): void {

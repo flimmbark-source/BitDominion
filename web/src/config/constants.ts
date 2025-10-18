@@ -5,6 +5,8 @@ export const WIDTH = 800;
 export const HEIGHT = 800;
 export const FPS = 60;
 
+export const ARENA_PADDING = 36;
+
 export const CASTLE_POS = new Vector2(WIDTH / 2, HEIGHT / 2);
 export const CASTLE_SIZE = 20;
 export const CASTLE_WIN_RADIUS = 25;
@@ -103,6 +105,19 @@ export const ARC_COLOR = '#DCDCDC';
 export const VICTORY_COLOR = '#50C878';
 export const DEFEAT_COLOR = '#DC3C3C';
 
+export const TREE_COLOR = '#1E5B31';
+export const TREE_OUTLINE_COLOR = 'rgba(46, 120, 70, 0.9)';
+export const TREE_CANOPY_SHADE = 'rgba(20, 60, 30, 0.42)';
+export const HUT_FILL_COLOR = '#9C6D3C';
+export const HUT_OUTLINE_COLOR = 'rgba(220, 170, 110, 0.9)';
+export const CHEST_CLOSED_COLOR = '#D9B357';
+export const CHEST_OPEN_COLOR = '#F2D48A';
+export const ROAD_COLOR = '#3A3731';
+export const ROAD_EDGE_COLOR = 'rgba(200, 190, 150, 0.2)';
+export const VILLAGER_IDLE_COLOR = '#E8DBA9';
+export const VILLAGER_ALERT_COLOR = '#FFB86C';
+export const VILLAGER_FLEE_COLOR = '#FFA552';
+
 export const CASTLE_COLOR_DEC = hexToRgb(CASTLE_COLOR);
 
 export const PATROL_ANCHOR_COUNT = 6;
@@ -126,3 +141,16 @@ export const NOISE_INVESTIGATE_TIME = 2;
 export const NOISE_ATTACK_STRENGTH = 12;
 export const NOISE_SEAL_STRENGTH = 10;
 export const NOISE_SPRINT_STRENGTH = 6;
+export const NOISE_VILLAGER_ALARM_STRENGTH = 9;
+export const NOISE_CHEST_STRENGTH = 16;
+
+export const TREE_STEER_STRENGTH = 18;
+export const HUT_STEER_STRENGTH = 22;
+export const VILLAGE_RADIUS = 70;
+export const VILLAGE_ALERT_RADIUS = 75;
+export const VILLAGE_FLEE_RADIUS = 90;
+export const VILLAGER_IDLE_RADIUS = 24;
+export const VILLAGER_SPEED = 32;
+export const ROAD_WIDTH = 18;
+export const CHEST_OPEN_RADIUS = 14;
+export const LOS_DEBUG_TTL = 0.3;

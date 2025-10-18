@@ -44,6 +44,7 @@ import { DarkUnit } from './entities/darkUnit';
 import { Knight } from './entities/knight';
 import { Seal } from './entities/seal';
 import { Vector2 } from './math/vector2';
+import { World } from './world';
 
 export type GameState = 'running' | 'victory' | 'defeat';
 
@@ -65,17 +66,19 @@ export class Game {
   public seals: Seal[] = [];
   public brokenSeals = 0;
   public state: GameState = 'running';
+  public world = new World();
   private anchors: PatrolAnchor[] = [];
   private nextAnchorIndex = 0;
   private lastKnownKnightPos: Vector2 | null = null;
   private noisePings: NoisePing[] = [];
-  private debugAnchors = false;
+  private debugOverlay = false;
   private lastPointerTime = 0;
   private lastPointerPos: Vector2 | null = null;
   private shieldWasActive = true;
   private shieldFlashTimer = 0;
 
   constructor() {
+    this.world = new World();
     this.anchors = this._generateAnchors();
     this.seals = this._generateSeals();
     this._spawnInitialUnits(5);
@@ -89,13 +92,14 @@ export class Game {
     this.seals = this._generateSeals();
     this.brokenSeals = 0;
     this.state = 'running';
+    this.world = new World();
     this.anchors = this._generateAnchors();
     this.nextAnchorIndex = 0;
     this.lastKnownKnightPos = null;
     this.noisePings = [];
     this.lastPointerPos = null;
     this.lastPointerTime = 0;
-    this.debugAnchors = false;
+    this.debugOverlay = false;
     this._spawnInitialUnits(5);
     this.shieldWasActive = this._isShieldActive();
     this.shieldFlashTimer = 0;
@@ -169,12 +173,42 @@ export class Game {
     return { position: mostSuspicious.position.clone(), suspicion: mostSuspicious.suspicion };
   }
 
+  getNearestAnchorTo(position: Vector2): Vector2 {
+    if (!this.anchors.length) {
+      this.anchors = this._generateAnchors();
+      this.nextAnchorIndex = 0;
+    }
+    let nearest = this.anchors[0];
+    const initialDx = nearest.position.x - position.x;
+    const initialDy = nearest.position.y - position.y;
+    let nearestDistSq = initialDx * initialDx + initialDy * initialDy;
+    for (let i = 1; i < this.anchors.length; i++) {
+      const dx = this.anchors[i].position.x - position.x;
+      const dy = this.anchors[i].position.y - position.y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < nearestDistSq) {
+        nearest = this.anchors[i];
+        nearestDistSq = distSq;
+      }
+    }
+    return nearest.position.clone();
+  }
+
   isAnySealChanneling(): boolean {
     return this.seals.some((seal) => seal.channeling);
   }
 
   getChannelingSeal(): Seal | null {
     return this.seals.find((seal) => seal.channeling) ?? null;
+  }
+
+  isAnyVillageAlarmed(): boolean {
+    return this.world.isAnyVillageAlarmed();
+  }
+
+  getAlarmedVillageCenter(): Vector2 | null {
+    const village = this.world.getAlarmedVillage();
+    return village ? village.center.clone() : null;
   }
 
   onPointer(x: number, y: number, timeSeconds?: number): void {
@@ -204,25 +238,41 @@ export class Game {
   }
 
   toggleAnchorDebug(): void {
-    this.debugAnchors = !this.debugAnchors;
+    this.debugOverlay = !this.debugOverlay;
+  }
+
+  toggleCanopy(): void {
+    this.world.toggleCanopy();
   }
 
   update(dt: number): void {
+    this.world.beginFrame(dt);
     if (this.state !== 'running') {
       this._updateShield(dt);
+      this.world.update(dt, {
+        knight: this.knight,
+        monsters: this.units,
+        emitNoise: (position, strength) => this.emitNoise(position, strength)
+      });
       return;
     }
 
-    this.knight.update(dt);
+    this.knight.update(dt, this.world);
     this._updateSeals(dt);
     this._updateShield(dt);
 
     for (const unit of this.units) {
-      unit.update(dt, this.knight, this);
+      unit.update(dt, this.knight, this, this.world);
       unit.attemptDamage(this.knight);
     }
 
     this.units = this.units.filter((unit) => unit.alive);
+
+    this.world.update(dt, {
+      knight: this.knight,
+      monsters: this.units,
+      emitNoise: (position, strength) => this.emitNoise(position, strength)
+    });
 
     if (this.knight.hp <= 0) {
       this.state = 'defeat';
@@ -257,6 +307,7 @@ export class Game {
     ctx.fillStyle = BACKGROUND_COLOR;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
+    this.world.drawTerrain(ctx);
     this._drawShield(ctx);
     this._drawCastle(ctx);
 
@@ -268,14 +319,16 @@ export class Game {
       unit.draw(ctx);
     }
 
-    this._drawNoisePings(ctx);
-
-    if (this.debugAnchors) {
-      this._drawAnchorDebug(ctx);
-    }
-
     this.knight.draw(ctx);
     this.knight.drawSwing(ctx);
+
+    this.world.drawCanopy(ctx);
+    this.world.drawVillageAlarms(ctx);
+    this._drawNoisePings(ctx);
+
+    if (this.debugOverlay) {
+      this._drawDebugOverlay(ctx);
+    }
 
     this._drawHud(ctx);
 
@@ -338,6 +391,10 @@ export class Game {
     }
   }
 
+  emitNoise(position: Vector2, strength: number): void {
+    this._emitNoise(position, strength);
+  }
+
   private _updateNoise(dt: number): void {
     if (!this.noisePings.length) {
       return;
@@ -364,6 +421,11 @@ export class Game {
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  private _drawDebugOverlay(ctx: CanvasRenderingContext2D): void {
+    this.world.drawDebug(ctx);
+    this._drawAnchorDebug(ctx);
   }
 
   private _drawAnchorDebug(ctx: CanvasRenderingContext2D): void {
