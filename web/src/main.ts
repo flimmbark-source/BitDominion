@@ -76,6 +76,13 @@ const CASTLE_SIZE = 20;
 const CASTLE_WIN_RADIUS = 25;
 const CASTLE_STAY_TIME = 3.0;
 
+const SHIELD_RING_RADIUS = CASTLE_SIZE / 2 + 30;
+const SHIELD_RING_WIDTH = 6;
+const SHIELD_RING_COLOR = 'rgba(130, 60, 200, 0.35)';
+const SHIELD_FLASH_COLOR = { r: 200, g: 150, b: 255 } as const;
+const SHIELD_FLASH_WIDTH = 8;
+const SHIELD_FLASH_DURATION = 0.35;
+
 const KNIGHT_SIZE = 6;
 const KNIGHT_ACCEL = 0.5;
 const KNIGHT_FRICTION = 0.9;
@@ -153,6 +160,7 @@ const SEAL_CHANNEL_TIME = 3.0;
 const SEAL_COLOR = '#DCC23C';
 const SEAL_PROGRESS_COLOR = '#FFFFFF';
 const SEAL_RING_RADIUS = 15;
+const SEAL_RING_OFFSET = 22;
 
 const BACKGROUND_COLOR = '#000000';
 const KNIGHT_COLOR = '#14C814';
@@ -690,19 +698,25 @@ class Seal {
     ctx.fillStyle = SEAL_COLOR;
     ctx.fillRect(this.pos.x - 5, this.pos.y - 5, 10, 10);
 
-    if (!this.channeling && this.progress <= 0) {
+    if (!this.channeling) {
       return;
     }
 
     const pct = Math.min(1, this.progress / SEAL_CHANNEL_TIME);
     const startAngle = -Math.PI / 2;
     const endAngle = startAngle + pct * Math.PI * 2;
+    const centerY = this.pos.y - SEAL_RING_OFFSET;
 
     ctx.save();
-    ctx.strokeStyle = SEAL_PROGRESS_COLOR;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
     ctx.beginPath();
-    ctx.arc(this.pos.x, this.pos.y, SEAL_RING_RADIUS, startAngle, endAngle);
+    ctx.arc(this.pos.x, centerY, SEAL_RING_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = SEAL_PROGRESS_COLOR;
+    ctx.beginPath();
+    ctx.arc(this.pos.x, centerY, SEAL_RING_RADIUS, startAngle, endAngle);
     ctx.stroke();
     ctx.restore();
   }
@@ -834,11 +848,14 @@ class Game {
   private debugAnchors = false;
   private lastPointerTime = 0;
   private lastPointerPos: Vector2 | null = null;
+  private shieldWasActive = true;
+  private shieldFlashTimer = 0;
 
   constructor() {
     this.anchors = this._generateAnchors();
     this.seals = this._generateSeals();
     this._spawnInitialUnits(5);
+    this.shieldWasActive = this._isShieldActive();
   }
 
   reset(): void {
@@ -856,6 +873,8 @@ class Game {
     this.lastPointerTime = 0;
     this.debugAnchors = false;
     this._spawnInitialUnits(5);
+    this.shieldWasActive = this._isShieldActive();
+    this.shieldFlashTimer = 0;
   }
 
   canSpawnMoreUnits(): boolean {
@@ -1130,11 +1149,13 @@ class Game {
 
   update(dt: number): void {
     if (this.state !== 'running') {
+      this._updateShield(dt);
       return;
     }
 
     this.knight.update(dt);
     this._updateSeals(dt);
+    this._updateShield(dt);
 
     for (const unit of this.units) {
       unit.update(dt, this.knight, this);
@@ -1187,10 +1208,27 @@ class Game {
     }
   }
 
+  private _updateShield(dt: number): void {
+    const shieldActive = this._isShieldActive();
+    if (this.shieldWasActive && !shieldActive) {
+      this.shieldFlashTimer = SHIELD_FLASH_DURATION;
+    }
+    this.shieldWasActive = shieldActive;
+
+    if (this.shieldFlashTimer > 0) {
+      this.shieldFlashTimer = Math.max(0, this.shieldFlashTimer - dt);
+    }
+  }
+
+  private _isShieldActive(): boolean {
+    return this.brokenSeals < SEAL_COUNT;
+  }
+
   draw(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = BACKGROUND_COLOR;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
+    this._drawShield(ctx);
     this._drawCastle(ctx);
 
     for (const seal of this.seals) {
@@ -1219,6 +1257,34 @@ class Game {
     }
   }
 
+  private _drawShield(ctx: CanvasRenderingContext2D): void {
+    const shieldActive = this._isShieldActive();
+    if (!shieldActive && this.shieldFlashTimer <= 0) {
+      return;
+    }
+
+    const radius = SHIELD_RING_RADIUS;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(CASTLE_POS.x, CASTLE_POS.y, radius, 0, Math.PI * 2);
+    if (shieldActive) {
+      ctx.lineWidth = SHIELD_RING_WIDTH;
+      ctx.strokeStyle = SHIELD_RING_COLOR;
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
+    const progress = this.shieldFlashTimer / SHIELD_FLASH_DURATION;
+    const clamped = Math.max(0, Math.min(1, progress));
+    ctx.lineWidth = SHIELD_FLASH_WIDTH + 4 * clamped;
+    const alpha = 0.25 + 0.55 * clamped;
+    const { r, g, b } = SHIELD_FLASH_COLOR;
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
+    ctx.stroke();
+    ctx.restore();
+  }
+
   private _drawCastle(ctx: CanvasRenderingContext2D): void {
     const pulse = (Math.sin(performance.now() / 300) + 1) * 0.5;
     const size = CASTLE_SIZE + pulse * 4;
@@ -1235,7 +1301,7 @@ class Game {
     ctx.fillStyle = HUD_COLOR;
     ctx.font = '18px Consolas, monospace';
     ctx.textBaseline = 'top';
-    const text = `HP: ${this.knight.hp}  Evil_Energy: ${this.darkLord.evilEnergy}  Units: ${this.units.length}/${MAX_UNITS}  Seals: ${this.brokenSeals}/${SEAL_COUNT}`;
+    const text = `HP: ${this.knight.hp}  Evil: ${this.darkLord.evilEnergy}  Units: ${this.units.length}/${MAX_UNITS}  Seals: ${this.brokenSeals}/${SEAL_COUNT}`;
     ctx.fillText(text, 12, 12);
   }
 
