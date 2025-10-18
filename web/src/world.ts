@@ -458,7 +458,8 @@ export class World {
           villager.panicTarget = null;
         }
 
-        if (previousState === 'idle' && villager.state !== 'idle') {
+        const enteringFlee = villager.state === 'flee' && previousState !== 'flee';
+        if (enteringFlee) {
           context.emitNoise(villager.pos, NOISE_VILLAGER_ALARM_STRENGTH);
         }
 
