@@ -88,18 +88,51 @@ const SWING_DURATION = 0.25;
 const SWING_COOLDOWN = 0.6;
 const SWING_ARC_POINTS = 16;
 
-const PATROL_SIZE = 4;
-const PATROL_DETECT_RADIUS = 80;
-const PATROL_MIN_SPEED = 0.6;
-const PATROL_MAX_SPEED = 1.2;
-const PATROL_WANDER_INTERVAL: [number, number] = [1.0, 3.0];
-const PATROL_MAX_COUNT = 15;
-const PATROL_REINFORCEMENT_COUNT = 2;
-const PATROL_SPAWN_RADIUS = 50;
-const PATROL_DAMAGE_COOLDOWN = 0.5;
-const PATROL_DETECTION_LERP = 0.15;
+const UNIT_SIZE = 4;
+const UNIT_WANDER_INTERVAL: [number, number] = [1.0, 3.0];
+const UNIT_DAMAGE_COOLDOWN = 0.5;
+const UNIT_DETECTION_LERP = 0.15;
 
-const DETECTION_REQUIRED_TIME = 2.0;
+const MAX_UNITS = 16;
+const DARK_LORD_ENERGY_PER_SEC = 3;
+const DARK_LORD_SPAWN_INTERVAL = 1.5;
+const DARK_LORD_REVEAL_MEMORY = 6.0;
+const PRIEST_REVEAL_RADIUS = 40;
+const CASTLE_EDGE_SPAWN_RADIUS = 40;
+
+const UNIT_COLORS = {
+  scout: { base: '#C82828', alert: '#FF5A5A' },
+  tank: { base: '#823E28', alert: '#C85A3C' },
+  priest: { base: '#7A2BC8', alert: '#B58CFF' }
+} as const;
+
+const UNIT_STATS = {
+  scout: {
+    cost: 10,
+    minSpeed: 1.0,
+    maxSpeed: 1.8,
+    detectionRadius: 80,
+    maxHp: 1
+  },
+  tank: {
+    cost: 25,
+    minSpeed: 0.5,
+    maxSpeed: 0.9,
+    detectionRadius: 60,
+    maxHp: 3
+  },
+  priest: {
+    cost: 20,
+    minSpeed: 0.8,
+    maxSpeed: 1.2,
+    detectionRadius: 70,
+    maxHp: 2
+  }
+} as const;
+
+type UnitType = keyof typeof UNIT_STATS;
+
+const CHEAPEST_UNIT_COST = Math.min(...Object.values(UNIT_STATS).map((stats) => stats.cost));
 
 const SEAL_COUNT = 3;
 const SEAL_MIN_CASTLE_DIST = 140;
@@ -112,8 +145,6 @@ const SEAL_RING_RADIUS = 15;
 
 const BACKGROUND_COLOR = '#000000';
 const KNIGHT_COLOR = '#14C814';
-const PATROL_COLOR = '#C82828';
-const PATROL_ALERT_COLOR = '#FF5A5A';
 const CASTLE_COLOR = '#8200B4';
 const HUD_COLOR = '#DCDCDC';
 const ARC_COLOR = '#DCDCDC';
@@ -177,21 +208,21 @@ class Knight {
     this.pos.clamp(half, half, WIDTH - half, HEIGHT - half);
   }
 
-  tryAttack(patrols: Patrol[]): Patrol[] {
+  tryAttack(units: DarkUnit[]): DarkUnit[] {
     if (this.swingTimer > 0) {
-      return this._collectHits(patrols);
+      return this._collectHits(units);
     }
     if (this.swingCooldown > 0) {
       return [];
     }
 
-    let nearest: Patrol | null = null;
+    let nearest: DarkUnit | null = null;
     let nearestDist = MELEE_RANGE + 1;
-    for (const patrol of patrols) {
-      if (!patrol.alive) continue;
-      const dist = patrol.pos.distanceTo(this.pos);
+    for (const unit of units) {
+      if (!unit.alive) continue;
+      const dist = unit.pos.distanceTo(this.pos);
       if (dist <= MELEE_RANGE && dist < nearestDist) {
-        nearest = patrol;
+        nearest = unit;
         nearestDist = dist;
       }
     }
@@ -202,19 +233,19 @@ class Knight {
 
     this.swingAngle = Math.atan2(nearest.pos.y - this.pos.y, nearest.pos.x - this.pos.x);
     this.swingTimer = SWING_DURATION;
-    return this._collectHits(patrols);
+    return this._collectHits(units);
   }
 
-  private _collectHits(patrols: Patrol[]): Patrol[] {
+  private _collectHits(units: DarkUnit[]): DarkUnit[] {
     if (this.swingAngle == null) {
       return [];
     }
-    const hits: Patrol[] = [];
-    for (const patrol of patrols) {
-      if (!patrol.alive) continue;
-      if (patrol.pos.distanceTo(this.pos) > MELEE_RANGE) continue;
-      if (this._pointInArc(patrol.pos)) {
-        hits.push(patrol);
+    const hits: DarkUnit[] = [];
+    for (const unit of units) {
+      if (!unit.alive) continue;
+      if (unit.pos.distanceTo(this.pos) > MELEE_RANGE) continue;
+      if (this._pointInArc(unit.pos)) {
+        hits.push(unit);
       }
     }
     return hits;
@@ -261,34 +292,43 @@ class Knight {
   }
 }
 
-class Patrol {
+class DarkUnit {
   public velocity = new Vector2();
   public detecting = false;
   public wanderTimer = 0;
   public damageTimer = 0;
   public alive = true;
+  public hp: number;
 
-  constructor(public pos: Vector2) {
+  constructor(public pos: Vector2, public readonly type: UnitType) {
+    this.hp = UNIT_STATS[type].maxHp;
     this._pickNewDirection();
   }
 
-  update(dt: number, knightPos: Vector2): void {
+  update(dt: number, knight: Knight, game: Game): void {
     if (!this.alive) {
       return;
     }
+
     const dtRatio = dt * FPS;
     this.wanderTimer -= dt;
     if (this.wanderTimer <= 0) {
       this._pickNewDirection();
     }
 
-    const toKnight = knightPos.clone().subtract(this.pos);
+    const toKnight = knight.pos.clone().subtract(this.pos);
     const distance = toKnight.length();
-    this.detecting = distance <= PATROL_DETECT_RADIUS;
+    const stats = UNIT_STATS[this.type];
+    this.detecting = distance <= stats.detectionRadius;
+
+    if (this.type === 'priest' && distance <= PRIEST_REVEAL_RADIUS) {
+      game.registerKnightReveal(this.pos);
+    }
 
     if (this.detecting && distance > 0) {
-      const desired = toKnight.normalize().scale(Math.max(this.velocity.length(), PATROL_MAX_SPEED));
-      this.velocity.lerp(desired, PATROL_DETECTION_LERP * dtRatio);
+      const speedCap = stats.maxSpeed;
+      const desired = toKnight.normalize().scale(Math.max(this.velocity.length(), speedCap));
+      this.velocity.lerp(desired, UNIT_DETECTION_LERP * dtRatio);
     }
 
     this.pos.add(this.velocity.clone().scale(dtRatio));
@@ -300,14 +340,15 @@ class Patrol {
   }
 
   private _pickNewDirection(): void {
+    const stats = UNIT_STATS[this.type];
     const angle = Math.random() * Math.PI * 2;
-    const speed = PATROL_MIN_SPEED + Math.random() * (PATROL_MAX_SPEED - PATROL_MIN_SPEED);
+    const speed = stats.minSpeed + Math.random() * (stats.maxSpeed - stats.minSpeed);
     this.velocity.set(Math.cos(angle) * speed, Math.sin(angle) * speed);
-    this.wanderTimer = PATROL_WANDER_INTERVAL[0] + Math.random() * (PATROL_WANDER_INTERVAL[1] - PATROL_WANDER_INTERVAL[0]);
+    this.wanderTimer = UNIT_WANDER_INTERVAL[0] + Math.random() * (UNIT_WANDER_INTERVAL[1] - UNIT_WANDER_INTERVAL[0]);
   }
 
   private _handleBounds(): void {
-    const half = PATROL_SIZE / 2;
+    const half = UNIT_SIZE / 2;
     let bounced = false;
     if (this.pos.x < half) {
       this.pos.x = half;
@@ -337,19 +378,27 @@ class Patrol {
       return false;
     }
     if (this.pos.distanceTo(knight.pos) < 6) {
-      this.damageTimer = PATROL_DAMAGE_COOLDOWN;
+      this.damageTimer = UNIT_DAMAGE_COOLDOWN;
       knight.hp = Math.max(0, knight.hp - 1);
       return true;
     }
     return false;
   }
 
+  takeDamage(amount: number): void {
+    this.hp = Math.max(0, this.hp - amount);
+    if (this.hp === 0) {
+      this.alive = false;
+    }
+  }
+
   draw(ctx: CanvasRenderingContext2D): void {
     if (!this.alive) {
       return;
     }
-    ctx.fillStyle = this.detecting ? PATROL_ALERT_COLOR : PATROL_COLOR;
-    ctx.fillRect(this.pos.x - PATROL_SIZE / 2, this.pos.y - PATROL_SIZE / 2, PATROL_SIZE, PATROL_SIZE);
+    const colors = UNIT_COLORS[this.type];
+    ctx.fillStyle = this.detecting ? colors.alert : colors.base;
+    ctx.fillRect(this.pos.x - UNIT_SIZE / 2, this.pos.y - UNIT_SIZE / 2, UNIT_SIZE, UNIT_SIZE);
   }
 }
 
@@ -399,83 +448,222 @@ class Seal {
   }
 }
 
-class DarkLord {
-  public detectionTimer = 0;
+class DarkLordAI {
   public evilEnergy = 0;
-  private evilAccumulator = 0;
+  private energyAccumulator = 0;
+  private spawnTimer = 0;
+  private knightRevealPos: Vector2 | null = null;
+  private knightRevealTimer = 0;
 
-  update(dt: number, detecting: boolean): boolean {
-    if (detecting) {
-      this.detectionTimer += dt;
-      this.evilAccumulator += dt;
-      if (this.evilAccumulator >= 1) {
-        const gained = Math.floor(this.evilAccumulator);
-        this.evilEnergy += gained;
-        this.evilAccumulator -= gained;
+  update(dt: number, game: Game): void {
+    this._accumulateEnergy(dt);
+    this._decayReveal(dt);
+
+    this.spawnTimer += dt;
+    while (this.spawnTimer >= DARK_LORD_SPAWN_INTERVAL) {
+      this.spawnTimer -= DARK_LORD_SPAWN_INTERVAL;
+      this._trySpawn(game);
+    }
+  }
+
+  registerKnightReveal(position: Vector2): void {
+    this.knightRevealPos = position.clone();
+    this.knightRevealTimer = DARK_LORD_REVEAL_MEMORY;
+  }
+
+  private _accumulateEnergy(dt: number): void {
+    this.energyAccumulator += dt * DARK_LORD_ENERGY_PER_SEC;
+    if (this.energyAccumulator >= 1) {
+      const gained = Math.floor(this.energyAccumulator);
+      this.evilEnergy += gained;
+      this.energyAccumulator -= gained;
+    }
+  }
+
+  private _decayReveal(dt: number): void {
+    if (this.knightRevealTimer > 0) {
+      this.knightRevealTimer = Math.max(0, this.knightRevealTimer - dt);
+      if (this.knightRevealTimer === 0) {
+        this.knightRevealPos = null;
       }
-    } else {
-      this.detectionTimer = 0;
-      this.evilAccumulator = 0;
+    }
+  }
+
+  private _trySpawn(game: Game): void {
+    if (this.evilEnergy < CHEAPEST_UNIT_COST) {
+      return;
+    }
+    if (!game.canSpawnMoreUnits()) {
+      return;
     }
 
-    if (this.detectionTimer > DETECTION_REQUIRED_TIME) {
-      this.detectionTimer = 0;
-      return true;
+    if (game.isAnySealChanneling()) {
+      this._spawnResponseForSeal(game);
+      return;
     }
-    return false;
+
+    if (this.knightRevealPos && this.knightRevealTimer > 0) {
+      this._spawnResponseToReveal(game);
+      return;
+    }
+
+    this._spawnCoverageScout(game);
+  }
+
+  private _spawnResponseForSeal(game: Game): void {
+    const seal = game.getChannelingSeal();
+    const target = seal?.pos ?? CASTLE_POS;
+    const spawnPoint = game.getCastleEdgePoint(target);
+
+    for (let i = 0; i < 2; i++) {
+      if (!this._spawnUnit(game, 'scout', this._jitter(spawnPoint, 12))) {
+        return;
+      }
+    }
+
+    this._spawnUnit(game, 'tank', this._jitter(spawnPoint, 16));
+  }
+
+  private _spawnResponseToReveal(game: Game): void {
+    const location = this.knightRevealPos ?? CASTLE_POS;
+    const jittered = this._jitter(location, 18);
+    if (!this._spawnUnit(game, 'tank', jittered)) {
+      return;
+    }
+    this._spawnUnit(game, 'priest', this._jitter(location, 18));
+  }
+
+  private _spawnCoverageScout(game: Game): void {
+    const anchor = game.getNextAnchor();
+    this._spawnUnit(game, 'scout', this._jitter(anchor, 14));
+  }
+
+  private _spawnUnit(game: Game, type: UnitType, position: Vector2): boolean {
+    if (!this._canAfford(type)) {
+      return false;
+    }
+    if (!game.spawnUnit(type, position)) {
+      return false;
+    }
+    this.evilEnergy -= UNIT_STATS[type].cost;
+    return true;
+  }
+
+  private _canAfford(type: UnitType): boolean {
+    return this.evilEnergy >= UNIT_STATS[type].cost;
+  }
+
+  private _jitter(position: Vector2, radius: number): Vector2 {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.random() * radius;
+    return position.clone().add(new Vector2(Math.cos(angle) * distance, Math.sin(angle) * distance));
   }
 }
 
 class Game {
   public knight = new Knight();
-  public patrols: Patrol[] = [];
-  public darkLord = new DarkLord();
+  public units: DarkUnit[] = [];
+  public darkLord = new DarkLordAI();
   public seals: Seal[] = [];
   public brokenSeals = 0;
   public state: GameState = 'running';
+  private patrolAnchors: Vector2[] = [];
+  private nextAnchorIndex = 0;
 
   constructor() {
-    this._spawnInitialPatrols(5);
+    this.patrolAnchors = this._generateAnchors();
     this.seals = this._generateSeals();
+    this._spawnInitialUnits(5);
   }
 
   reset(): void {
     this.knight = new Knight();
-    this.patrols = [];
-    this.darkLord = new DarkLord();
+    this.units = [];
+    this.darkLord = new DarkLordAI();
     this.seals = this._generateSeals();
     this.brokenSeals = 0;
     this.state = 'running';
-    this._spawnInitialPatrols(5);
+    this.patrolAnchors = this._generateAnchors();
+    this.nextAnchorIndex = 0;
+    this._spawnInitialUnits(5);
   }
 
-  private _spawnInitialPatrols(count: number): void {
+  canSpawnMoreUnits(): boolean {
+    return this.units.length < MAX_UNITS;
+  }
+
+  spawnUnit(type: UnitType, position: Vector2): boolean {
+    if (!this.canSpawnMoreUnits()) {
+      return false;
+    }
+    const clamped = position
+      .clone()
+      .clamp(UNIT_SIZE / 2, UNIT_SIZE / 2, WIDTH - UNIT_SIZE / 2, HEIGHT - UNIT_SIZE / 2);
+    this.units.push(new DarkUnit(clamped, type));
+    return true;
+  }
+
+  getCastleEdgePoint(towards?: Vector2): Vector2 {
+    const direction = towards ? towards.clone().subtract(CASTLE_POS) : this._randomUnitVector();
+    if (direction.lengthSq() === 0) {
+      direction.set(Math.random() - 0.5, Math.random() - 0.5);
+    }
+    direction.normalize();
+    const jitter = (Math.random() - 0.5) * 10;
+    const offset = direction.scale(CASTLE_EDGE_SPAWN_RADIUS + jitter);
+    return CASTLE_POS.clone().add(offset);
+  }
+
+  getNextAnchor(): Vector2 {
+    if (this.patrolAnchors.length === 0) {
+      this.patrolAnchors = this._generateAnchors();
+      this.nextAnchorIndex = 0;
+    }
+    const anchor = this.patrolAnchors[this.nextAnchorIndex % this.patrolAnchors.length];
+    this.nextAnchorIndex = (this.nextAnchorIndex + 1) % this.patrolAnchors.length;
+    return anchor.clone();
+  }
+
+  registerKnightReveal(position: Vector2): void {
+    this.darkLord.registerKnightReveal(position);
+  }
+
+  isAnySealChanneling(): boolean {
+    return this.seals.some((seal) => seal.channeling);
+  }
+
+  getChannelingSeal(): Seal | null {
+    return this.seals.find((seal) => seal.channeling) ?? null;
+  }
+
+  private _spawnInitialUnits(count: number): void {
     for (let i = 0; i < count; i++) {
-      this.spawnPatrolRandom();
+      const position = this.getCastleEdgePoint();
+      this.spawnUnit('scout', position);
     }
   }
 
-  spawnPatrolRandom(): void {
-    for (let i = 0; i < 100; i++) {
-      const pos = new Vector2(Math.random() * WIDTH, Math.random() * HEIGHT);
-      if (pos.distanceTo(CASTLE_POS) >= 60) {
-        this.patrols.push(new Patrol(pos));
-        return;
-      }
-    }
+  private _generateAnchors(): Vector2[] {
+    const offsets = [
+      new Vector2(-200, 0),
+      new Vector2(200, 0),
+      new Vector2(0, -200),
+      new Vector2(0, 200),
+      new Vector2(-150, -150),
+      new Vector2(150, 150),
+      new Vector2(-150, 150),
+      new Vector2(150, -150)
+    ];
+    return offsets.map((offset) =>
+      CASTLE_POS.clone()
+        .add(offset)
+        .clamp(UNIT_SIZE / 2, UNIT_SIZE / 2, WIDTH - UNIT_SIZE / 2, HEIGHT - UNIT_SIZE / 2)
+    );
   }
 
-  spawnPatrolNearCastle(count: number): void {
-    for (let i = 0; i < count; i++) {
-      if (this.patrols.length >= PATROL_MAX_COUNT) {
-        break;
-      }
-      const angle = Math.random() * Math.PI * 2;
-      const radius = Math.random() * PATROL_SPAWN_RADIUS;
-      const pos = CASTLE_POS.clone().add(new Vector2(Math.cos(angle) * radius, Math.sin(angle) * radius));
-      pos.clamp(PATROL_SIZE / 2, PATROL_SIZE / 2, WIDTH - PATROL_SIZE / 2, HEIGHT - PATROL_SIZE / 2);
-      this.patrols.push(new Patrol(pos));
-    }
+  private _randomUnitVector(): Vector2 {
+    const angle = Math.random() * Math.PI * 2;
+    return new Vector2(Math.cos(angle), Math.sin(angle));
   }
 
   private _generateSeals(): Seal[] {
@@ -533,34 +721,27 @@ class Game {
     this.knight.update(dt);
     this._updateSeals(dt);
 
-    let anyDetecting = false;
-    for (const patrol of this.patrols) {
-      patrol.update(dt, this.knight.pos);
-      if (patrol.detecting) {
-        anyDetecting = true;
-      }
-      patrol.attemptDamage(this.knight);
+    for (const unit of this.units) {
+      unit.update(dt, this.knight, this);
+      unit.attemptDamage(this.knight);
     }
 
-    this.patrols = this.patrols.filter((p) => p.alive);
+    this.units = this.units.filter((unit) => unit.alive);
 
     if (this.knight.hp <= 0) {
       this.state = 'defeat';
       return;
     }
 
-    const reinforcementReady = this.darkLord.update(dt, anyDetecting);
-    if (anyDetecting && reinforcementReady) {
-      this.spawnPatrolNearCastle(PATROL_REINFORCEMENT_COUNT);
+    const hits = this.knight.tryAttack(this.units);
+    if (hits.length) {
+      for (const unit of hits) {
+        unit.takeDamage(1);
+      }
+      this.units = this.units.filter((unit) => unit.alive);
     }
 
-    const hits = this.knight.tryAttack(this.patrols);
-    if (hits.length) {
-      for (const patrol of hits) {
-        patrol.alive = false;
-      }
-      this.patrols = this.patrols.filter((p) => p.alive);
-    }
+    this.darkLord.update(dt, this);
 
     this._updateVictory(dt);
   }
@@ -590,8 +771,8 @@ class Game {
       seal.draw(ctx);
     }
 
-    for (const patrol of this.patrols) {
-      patrol.draw(ctx);
+    for (const unit of this.units) {
+      unit.draw(ctx);
     }
 
     this.knight.draw(ctx);
@@ -622,7 +803,7 @@ class Game {
     ctx.fillStyle = HUD_COLOR;
     ctx.font = '18px Consolas, monospace';
     ctx.textBaseline = 'top';
-    const text = `HP: ${this.knight.hp}  Evil: ${this.darkLord.evilEnergy}  Patrols: ${this.patrols.length}  Seals: ${this.brokenSeals}/${SEAL_COUNT}`;
+    const text = `HP: ${this.knight.hp}  Evil_Energy: ${this.darkLord.evilEnergy}  Units: ${this.units.length}/${MAX_UNITS}  Seals: ${this.brokenSeals}/${SEAL_COUNT}`;
     ctx.fillText(text, 12, 12);
   }
 
