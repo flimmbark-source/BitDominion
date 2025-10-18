@@ -1,6 +1,5 @@
 import {
   ARENA_PADDING,
-  CASTLE_POS,
   CHEST_CLOSED_COLOR,
   CHEST_OPEN_COLOR,
   CHEST_OPEN_RADIUS,
@@ -11,10 +10,6 @@ import {
   LOS_DEBUG_TTL,
   NOISE_CHEST_STRENGTH,
   NOISE_VILLAGER_ALARM_STRENGTH,
-  ROAD_COLOR,
-  ROAD_EDGE_COLOR,
-  ROAD_WIDTH,
-  TREE_CANOPY_SHADE,
   TREE_COLOR,
   TREE_OUTLINE_COLOR,
   TREE_STEER_STRENGTH,
@@ -36,12 +31,6 @@ import type { Knight } from './entities/knight';
 export interface Tree {
   position: Vector2;
   radius: number;
-}
-
-export interface ForestPatch {
-  center: Vector2;
-  radius: number;
-  trees: Tree[];
 }
 
 export interface Hut {
@@ -74,12 +63,6 @@ export interface Village {
   villagers: Villager[];
   alarmed: boolean;
   canopyRadius: number;
-}
-
-interface RoadSegment {
-  start: Vector2;
-  end: Vector2;
-  halfWidth: number;
 }
 
 interface LosSegment {
@@ -116,22 +99,9 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function distanceToSegment(point: Vector2, a: Vector2, b: Vector2): number {
-  const ab = b.clone().subtract(a);
-  const lengthSq = ab.lengthSq();
-  if (lengthSq === 0) {
-    return point.distanceTo(a);
-  }
-  const t = clamp(((point.x - a.x) * ab.x + (point.y - a.y) * ab.y) / lengthSq, 0, 1);
-  const projection = new Vector2(a.x + ab.x * t, a.y + ab.y * t);
-  return projection.distanceTo(point);
-}
-
 export class World {
-  public readonly forestPatches: ForestPatch[] = [];
   public readonly trees: Tree[] = [];
   public readonly villages: Village[] = [];
-  public readonly roads: RoadSegment[] = [];
 
   private readonly huts: Hut[] = [];
   private readonly losSegments: LosSegment[] = [];
@@ -141,7 +111,6 @@ export class World {
     const rand = mulberry32(0x5123abcd);
     this.buildForests(rand);
     this.buildVillages(rand);
-    this.buildRoads();
   }
 
   beginFrame(dt: number): void {
@@ -299,36 +268,19 @@ export class World {
     return this.losSegments;
   }
 
-  isPointOnRoad(point: Vector2): boolean {
-    for (const road of this.roads) {
-      const distance = distanceToSegment(point, road.start, road.end);
-      if (distance <= road.halfWidth) {
-        return true;
-      }
-    }
+  isPointOnRoad(_point: Vector2): boolean {
     return false;
   }
 
   drawTerrain(ctx: CanvasRenderingContext2D): void {
-    this.drawRoads(ctx);
     this.drawHuts(ctx);
     this.drawChests(ctx);
     this.drawTrees(ctx);
     this.drawVillagers(ctx);
   }
 
-  drawCanopy(ctx: CanvasRenderingContext2D): void {
-    if (!this.canopyEnabled) {
-      return;
-    }
-    ctx.save();
-    ctx.fillStyle = TREE_CANOPY_SHADE;
-    for (const patch of this.forestPatches) {
-      ctx.beginPath();
-      ctx.arc(patch.center.x, patch.center.y, patch.radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
+  drawCanopy(_ctx: CanvasRenderingContext2D): void {
+    // Canopy rendering has been disabled to remove the green overlay.
   }
 
   drawDebug(ctx: CanvasRenderingContext2D): void {
@@ -391,10 +343,8 @@ export class World {
         position.x = clamp(position.x, ARENA_PADDING, WIDTH - ARENA_PADDING);
         position.y = clamp(position.y, ARENA_PADDING, HEIGHT - ARENA_PADDING);
         const treeRadius = 12 + rand() * 8;
-        trees.push({ position, radius: treeRadius });
         this.trees.push({ position: position.clone(), radius: treeRadius });
       }
-      this.forestPatches.push({ center, radius: radius + 28, trees });
     }
   }
 
@@ -467,14 +417,6 @@ export class World {
       };
       this.villages.push(village);
     }
-  }
-
-  private buildRoads(): void {
-    this.roads.push(
-      { start: new Vector2(80, 660), end: new Vector2(640, 200), halfWidth: ROAD_WIDTH / 2 },
-      { start: new Vector2(120, 120), end: new Vector2(680, 120), halfWidth: ROAD_WIDTH / 2 },
-      { start: new Vector2(580, 360), end: CASTLE_POS.clone(), halfWidth: ROAD_WIDTH / 2.4 }
-    );
   }
 
   private updateVillages(dt: number, context: WorldUpdateContext): void {
@@ -715,27 +657,6 @@ export class World {
       }
     }
     return true;
-  }
-
-  private drawRoads(ctx: CanvasRenderingContext2D): void {
-    ctx.save();
-    ctx.lineCap = 'round';
-    for (const road of this.roads) {
-      ctx.strokeStyle = ROAD_EDGE_COLOR;
-      ctx.lineWidth = road.halfWidth * 2 + 4;
-      ctx.beginPath();
-      ctx.moveTo(road.start.x, road.start.y);
-      ctx.lineTo(road.end.x, road.end.y);
-      ctx.stroke();
-
-      ctx.strokeStyle = ROAD_COLOR;
-      ctx.lineWidth = road.halfWidth * 2;
-      ctx.beginPath();
-      ctx.moveTo(road.start.x, road.start.y);
-      ctx.lineTo(road.end.x, road.end.y);
-      ctx.stroke();
-    }
-    ctx.restore();
   }
 
   private drawHuts(ctx: CanvasRenderingContext2D): void {
