@@ -1,5 +1,0 @@
-{
-  "name": "BitDominion",
-  "image": "mcr.microsoft.com/devcontainers/universal:2",
-  "postStartCommand": "cd web && npm install"
-}
