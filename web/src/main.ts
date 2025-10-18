@@ -101,6 +101,15 @@ const PATROL_DETECTION_LERP = 0.15;
 
 const DETECTION_REQUIRED_TIME = 2.0;
 
+const SEAL_COUNT = 3;
+const SEAL_MIN_CASTLE_DIST = 140;
+const SEAL_MIN_SEPARATION = 80;
+const SEAL_CHANNEL_RADIUS = 25;
+const SEAL_CHANNEL_TIME = 3.0;
+const SEAL_COLOR = '#DCC23C';
+const SEAL_PROGRESS_COLOR = '#FFFFFF';
+const SEAL_RING_RADIUS = 15;
+
 const BACKGROUND_COLOR = '#000000';
 const KNIGHT_COLOR = '#14C814';
 const PATROL_COLOR = '#C82828';
@@ -344,6 +353,52 @@ class Patrol {
   }
 }
 
+class Seal {
+  public progress = 0;
+  public channeling = false;
+
+  constructor(public readonly pos: Vector2) {}
+
+  update(knightPos: Vector2, dt: number): { completed: boolean; started: boolean } {
+    let started = false;
+    if (knightPos.distanceTo(this.pos) <= SEAL_CHANNEL_RADIUS) {
+      if (!this.channeling) {
+        started = true;
+      }
+      this.channeling = true;
+      this.progress = Math.min(SEAL_CHANNEL_TIME, this.progress + dt);
+    } else {
+      this.channeling = false;
+      if (this.progress < SEAL_CHANNEL_TIME) {
+        this.progress = Math.max(0, this.progress - dt * 0.5);
+      }
+    }
+    const completed = this.progress >= SEAL_CHANNEL_TIME;
+    return { completed, started };
+  }
+
+  draw(ctx: CanvasRenderingContext2D): void {
+    ctx.fillStyle = SEAL_COLOR;
+    ctx.fillRect(this.pos.x - 5, this.pos.y - 5, 10, 10);
+
+    if (!this.channeling && this.progress <= 0) {
+      return;
+    }
+
+    const pct = Math.min(1, this.progress / SEAL_CHANNEL_TIME);
+    const startAngle = -Math.PI / 2;
+    const endAngle = startAngle + pct * Math.PI * 2;
+
+    ctx.save();
+    ctx.strokeStyle = SEAL_PROGRESS_COLOR;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(this.pos.x, this.pos.y, SEAL_RING_RADIUS, startAngle, endAngle);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
 class DarkLord {
   public detectionTimer = 0;
   public evilEnergy = 0;
@@ -375,16 +430,21 @@ class Game {
   public knight = new Knight();
   public patrols: Patrol[] = [];
   public darkLord = new DarkLord();
+  public seals: Seal[] = [];
+  public brokenSeals = 0;
   public state: GameState = 'running';
 
   constructor() {
     this._spawnInitialPatrols(5);
+    this.seals = this._generateSeals();
   }
 
   reset(): void {
     this.knight = new Knight();
     this.patrols = [];
     this.darkLord = new DarkLord();
+    this.seals = this._generateSeals();
+    this.brokenSeals = 0;
     this.state = 'running';
     this._spawnInitialPatrols(5);
   }
@@ -418,6 +478,46 @@ class Game {
     }
   }
 
+  private _generateSeals(): Seal[] {
+    const seals: Seal[] = [];
+    const maxAttempts = 800;
+    const minRadius = SEAL_MIN_CASTLE_DIST;
+    const maxRadius = Math.max(minRadius, Math.min(WIDTH, HEIGHT) / 2 - 80);
+    const radiusRange = Math.max(0, maxRadius - minRadius);
+
+    for (let attempts = 0; seals.length < SEAL_COUNT && attempts < maxAttempts; attempts++) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = minRadius + (radiusRange > 0 ? Math.random() * radiusRange : 0);
+      const pos = CASTLE_POS.clone().add(new Vector2(Math.cos(angle) * radius, Math.sin(angle) * radius));
+      if (seals.some((seal) => seal.pos.distanceTo(pos) < SEAL_MIN_SEPARATION)) {
+        continue;
+      }
+      seals.push(new Seal(pos));
+    }
+
+    if (seals.length < SEAL_COUNT) {
+      const fallbackRadius = Math.max(minRadius, minRadius + radiusRange / 2);
+      for (let i = seals.length; i < SEAL_COUNT; i++) {
+        const angle = (i / SEAL_COUNT) * Math.PI * 2;
+        const pos = CASTLE_POS.clone().add(new Vector2(Math.cos(angle) * fallbackRadius, Math.sin(angle) * fallbackRadius));
+        seals.push(new Seal(pos));
+      }
+    }
+
+    return seals;
+  }
+
+  private _updateSeals(dt: number): void {
+    for (let i = this.seals.length - 1; i >= 0; i--) {
+      const seal = this.seals[i];
+      const { completed } = seal.update(this.knight.pos, dt);
+      if (completed) {
+        this.seals.splice(i, 1);
+        this.brokenSeals += 1;
+      }
+    }
+  }
+
   onPointer(x: number, y: number): void {
     if (this.state !== 'running') {
       return;
@@ -431,6 +531,7 @@ class Game {
     }
 
     this.knight.update(dt);
+    this._updateSeals(dt);
 
     let anyDetecting = false;
     for (const patrol of this.patrols) {
@@ -465,6 +566,10 @@ class Game {
   }
 
   private _updateVictory(dt: number): void {
+    if (this.brokenSeals < SEAL_COUNT) {
+      this.knight.castleTimer = 0;
+      return;
+    }
     if (this.knight.pos.distanceTo(CASTLE_POS) <= CASTLE_WIN_RADIUS) {
       this.knight.castleTimer += dt;
       if (this.knight.castleTimer >= CASTLE_STAY_TIME) {
@@ -480,6 +585,10 @@ class Game {
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
     this._drawCastle(ctx);
+
+    for (const seal of this.seals) {
+      seal.draw(ctx);
+    }
 
     for (const patrol of this.patrols) {
       patrol.draw(ctx);
@@ -513,7 +622,7 @@ class Game {
     ctx.fillStyle = HUD_COLOR;
     ctx.font = '18px Consolas, monospace';
     ctx.textBaseline = 'top';
-    const text = `HP: ${this.knight.hp}  Evil: ${this.darkLord.evilEnergy}  Patrols: ${this.patrols.length}`;
+    const text = `HP: ${this.knight.hp}  Evil: ${this.darkLord.evilEnergy}  Patrols: ${this.patrols.length}  Seals: ${this.brokenSeals}/${SEAL_COUNT}`;
     ctx.fillText(text, 12, 12);
   }
 
