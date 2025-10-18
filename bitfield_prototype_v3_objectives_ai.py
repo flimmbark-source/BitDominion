@@ -35,6 +35,44 @@ SEAL_MIN_SEPARATION = 80
 SEAL_CHANNEL_RADIUS = 25
 SEAL_CHANNEL_TIME = 3.0
 
+FOREST_PATCH_RANGE = (3, 5)
+TREES_PER_PATCH_RANGE = (20, 40)
+TREE_RADIUS_RANGE = (6, 10)
+FOREST_CLUSTER_RADIUS = 70
+FOREST_CANOPY_EXTRA = 16
+FOREST_CANOPY_TREE_THRESHOLD = 3
+
+VILLAGE_COUNT_RANGE = (2, 3)
+VILLAGE_MIN_CASTLE_DIST = 180
+VILLAGE_MIN_SEPARATION = 140
+VILLAGE_HUT_COUNT_RANGE = (4, 8)
+VILLAGE_RADIUS = 90
+HUT_SIZE = 10
+WELL_SIZE = 8
+CHEST_SIZE = 6
+SHARD_SIZE = 3
+WELL_HEAL_TIME = 1.5
+WELL_HEAL_RADIUS = 20
+CHEST_OPEN_TIME = 0.8
+CHEST_INTERACT_RADIUS = 18
+SHARD_COLLECT_RADIUS = 12
+WELL_NOISE_STRENGTH = 0.7
+CHEST_NOISE_STRENGTH = 1.4
+VILLAGER_ALARM_NOISE_STRENGTH = 0.9
+
+ROAD_WIDTH = 4
+ROAD_SPEED_MULT = 1.15
+KNIGHT_CANOPY_SPEED_MULT = 0.9
+ROAD_SAMPLING_RADIUS = 6
+
+VILLAGER_IDLE_RADIUS = 12
+VILLAGER_SPEED = 110.0
+VILLAGER_FEAR_RADIUS = 70
+VILLAGER_ARC_RADIUS = 80
+VILLAGER_ROAD_FLEE_TIME = 3.0
+
+LOS_SAMPLE_STEP = 8
+
 ARENA_PADDING = 40
 
 # Units / Macro AI
@@ -93,8 +131,221 @@ random.seed(7)
 
 
 @dataclass
+class Tree:
+    pos: pygame.math.Vector2
+    radius: float
+
+
+@dataclass
+class ForestPatch:
+    center: pygame.math.Vector2
+    trees: List[Tree]
+
+    def __post_init__(self) -> None:
+        self.max_radius = max((tree.pos - self.center).length() + tree.radius for tree in self.trees)
+        min_x = min(tree.pos.x - tree.radius for tree in self.trees)
+        max_x = max(tree.pos.x + tree.radius for tree in self.trees)
+        min_y = min(tree.pos.y - tree.radius for tree in self.trees)
+        max_y = max(tree.pos.y + tree.radius for tree in self.trees)
+        self.bounds = pygame.Rect(int(min_x), int(min_y), int(max_x - min_x) + 1, int(max_y - min_y) + 1)
+
+    def under_canopy(self, pos: pygame.math.Vector2) -> bool:
+        if (pos - self.center).length() > self.max_radius + FOREST_CANOPY_EXTRA:
+            return False
+        count = 0
+        for tree in self.trees:
+            if tree.pos.distance_to(pos) <= tree.radius + FOREST_CANOPY_EXTRA:
+                count += 1
+                if count >= FOREST_CANOPY_TREE_THRESHOLD:
+                    return True
+        return False
+
+
+@dataclass
+class Hut:
+    center: pygame.math.Vector2
+
+    @property
+    def rect(self) -> pygame.Rect:
+        rect = pygame.Rect(0, 0, HUT_SIZE, HUT_SIZE)
+        rect.center = self.center.xy
+        return rect
+
+
+@dataclass
+class Well:
+    pos: pygame.math.Vector2
+    timer: float = 0.0
+
+
+@dataclass
+class Chest:
+    pos: pygame.math.Vector2
+    open_timer: float = 0.0
+    opened: bool = False
+
+
+@dataclass
+class ValorShard:
+    pos: pygame.math.Vector2
+    timer: float = 0.0
+
+
+@dataclass
+class Villager:
+    pos: pygame.math.Vector2
+    home: pygame.math.Vector2
+    village: "Village"
+    state: str = "idle"
+    wander_target: Optional[pygame.math.Vector2] = None
+    wander_timer: float = 0.0
+    flee_direction: Optional[pygame.math.Vector2] = None
+    alarmed: bool = False
+    road_timer: float = 0.0
+    calm_timer: float = 0.0
+    was_on_road: bool = False
+
+    def update(
+        self,
+        dt: float,
+        world: "World",
+        knight: "Knight",
+        threats: List["Unit"],
+        game: "Game",
+    ) -> None:
+        nearest_threat: Optional[pygame.math.Vector2] = None
+        nearest_dist = float("inf")
+        for threat in threats:
+            if not threat.alive:
+                continue
+            dist = threat.pos.distance_to(self.pos)
+            if dist < nearest_dist:
+                nearest_dist = dist
+                nearest_threat = threat.pos
+        knight_threat = None
+        if knight.swing_timer > 0.0 and knight.pos.distance_to(self.pos) <= VILLAGER_ARC_RADIUS:
+            knight_threat = knight.pos
+
+        danger = False
+        danger_pos: Optional[pygame.math.Vector2] = None
+        if nearest_dist <= VILLAGER_FEAR_RADIUS:
+            danger = True
+            danger_pos = nearest_threat
+        elif knight_threat is not None:
+            danger = True
+            danger_pos = knight_threat
+
+        if danger and self.state != "flee":
+            self.start_flee(danger_pos, world, game)
+
+        if self.state == "flee":
+            self.flee_update(dt, world, danger_pos)
+        else:
+            if danger and self.state != "flee":
+                self.start_flee(danger_pos, world, game)
+            self.idle_update(dt, world)
+
+        world.resolve_circle_collisions(self.pos, 5.0)
+        world.clamp_to_bounds(self.pos, 4.0)
+
+        if self.state == "flee":
+            self.calm_timer = 0.0
+        else:
+            if self.alarmed:
+                self.calm_timer += dt
+                if self.calm_timer >= 1.5:
+                    self.alarmed = False
+
+    def start_flee(
+        self,
+        threat_pos: Optional[pygame.math.Vector2],
+        world: "World",
+        game: "Game",
+    ) -> None:
+        self.state = "flee"
+        base_dir = pygame.math.Vector2()
+        if threat_pos is not None:
+            base_dir = self.pos - threat_pos
+        if base_dir.length_squared() == 0:
+            base_dir = self.pos - self.village.center
+        if base_dir.length_squared() == 0:
+            base_dir = pygame.math.Vector2(1, 0)
+        base_dir.normalize_ip()
+        self.flee_direction = base_dir
+        self.alarmed = True
+        self.road_timer = 0.0
+        self.calm_timer = 0.0
+        self.was_on_road = False
+        game.spawn_noise(self.pos, VILLAGER_ALARM_NOISE_STRENGTH)
+
+    def flee_update(
+        self,
+        dt: float,
+        world: "World",
+        danger_pos: Optional[pygame.math.Vector2],
+    ) -> None:
+        speed = VILLAGER_SPEED * world.get_speed_multiplier(self.pos, "villager")
+        direction = self.flee_direction or pygame.math.Vector2()
+        on_road = world.is_on_road(self.pos)
+        if on_road and not self.was_on_road:
+            road_dir, _ = world.nearest_road_direction(self.pos, danger_pos)
+            if road_dir.length_squared() > 0:
+                direction = road_dir
+                self.flee_direction = road_dir
+            self.road_timer = VILLAGER_ROAD_FLEE_TIME
+        if self.road_timer > 0.0:
+            self.road_timer = max(0.0, self.road_timer - dt)
+        if not on_road and self.road_timer <= 0.0:
+            center_dir = self.village.center - self.pos
+            if center_dir.length_squared() > 0:
+                center_dir.normalize_ip()
+                direction = center_dir
+        if direction.length_squared() == 0:
+            direction = pygame.math.Vector2(1, 0)
+        self.pos += direction * speed * dt
+        if not on_road and self.road_timer <= 0.0 and danger_pos is None:
+            self.state = "idle"
+        self.was_on_road = on_road
+
+    def idle_update(self, dt: float, world: "World") -> None:
+        self.state = "idle"
+        if self.wander_timer <= 0.0 or self.wander_target is None:
+            angle = random.uniform(0, 2 * math.pi)
+            radius = random.uniform(0, VILLAGER_IDLE_RADIUS)
+            offset = pygame.math.Vector2(math.cos(angle), math.sin(angle)) * radius
+            self.wander_target = self.home + offset
+            self.wander_timer = random.uniform(1.0, 2.5)
+        else:
+            self.wander_timer -= dt
+        target = self.wander_target or self.home
+        direction = target - self.pos
+        if direction.length_squared() > 4:
+            direction.normalize_ip()
+            self.pos += direction * VILLAGER_SPEED * 0.35 * dt
+        else:
+            self.wander_target = None
+
+    def draw(self, surface: pygame.Surface) -> None:
+        rect = pygame.Rect(0, 0, 3, 3)
+        rect.center = self.pos.xy
+        color = (240, 230, 170) if not self.alarmed else (255, 190, 120)
+        pygame.draw.rect(surface, color, rect)
+
+
+@dataclass
+class Village:
+    center: pygame.math.Vector2
+    huts: List[Hut]
+    well: Well
+    chests: List[Chest]
+    villagers: List[Villager]
+    alarm_active: bool = False
+
+
+@dataclass
 class NoisePing:
     pos: pygame.math.Vector2
+    strength: float = 1.0
     timer: float = 0.0
 
     def update(self, dt: float) -> bool:
@@ -103,7 +354,8 @@ class NoisePing:
 
     def draw(self, surface: pygame.Surface) -> None:
         t = min(1.0, self.timer / NOISE_RING_DURATION)
-        radius = NOISE_RING_MIN_RADIUS + (NOISE_RING_MAX_RADIUS - NOISE_RING_MIN_RADIUS) * t
+        radius_scale = 0.7 + 0.6 * self.strength
+        radius = (NOISE_RING_MIN_RADIUS + (NOISE_RING_MAX_RADIUS - NOISE_RING_MIN_RADIUS) * t) * radius_scale
         alpha = max(0, int(180 * (1.0 - t)))
         color = (255, 150, 100, alpha)
         self._draw_circle_alpha(surface, color, self.pos, int(radius))
@@ -131,6 +383,415 @@ class PulseEffect:
         alpha = max(0, int(200 * (1.0 - t)))
         NoisePing._draw_circle_alpha(surface, (255, 230, 120, alpha), self.pos, int(radius))
 
+
+class World:
+    def __init__(self) -> None:
+        self.forest_patches: List[ForestPatch] = self._generate_forests()
+        self.trees: List[Tree] = [tree for patch in self.forest_patches for tree in patch.trees]
+        self.villages: List[Village] = []
+        self.villages = self._generate_villages()
+        self.road_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        self.road_surface.fill((0, 0, 0, 0))
+        self.road_segments: List[Tuple[pygame.math.Vector2, pygame.math.Vector2]] = []
+        self._generate_roads()
+        self.road_mask = pygame.mask.from_surface(self.road_surface)
+        self.canopy_overlay = self._build_canopy_overlay()
+        self.valor_shards: List[ValorShard] = []
+
+    # --- Generation helpers ---
+    def _generate_forests(self) -> List[ForestPatch]:
+        patches: List[ForestPatch] = []
+        count = random.randint(*FOREST_PATCH_RANGE)
+        for _ in range(count):
+            center = pygame.math.Vector2(
+                random.uniform(ARENA_PADDING + 60, WIDTH - ARENA_PADDING - 60),
+                random.uniform(ARENA_PADDING + 60, HEIGHT - ARENA_PADDING - 60),
+            )
+            tree_count = random.randint(*TREES_PER_PATCH_RANGE)
+            trees: List[Tree] = []
+            for _ in range(tree_count):
+                angle = random.uniform(0, 2 * math.pi)
+                radius = random.uniform(8, FOREST_CLUSTER_RADIUS)
+                offset = pygame.math.Vector2(math.cos(angle), math.sin(angle)) * radius
+                offset += pygame.math.Vector2(random.gauss(0, 12), random.gauss(0, 12))
+                pos = center + offset
+                pos.x = max(ARENA_PADDING, min(WIDTH - ARENA_PADDING, pos.x))
+                pos.y = max(ARENA_PADDING, min(HEIGHT - ARENA_PADDING, pos.y))
+                tree_radius = random.uniform(*TREE_RADIUS_RANGE)
+                trees.append(Tree(pos, tree_radius))
+            patches.append(ForestPatch(center, trees))
+        return patches
+
+    def _generate_villages(self) -> List[Village]:
+        villages: List[Village] = []
+        desired = random.randint(*VILLAGE_COUNT_RANGE)
+        attempts = 0
+        while len(villages) < desired and attempts < 400:
+            attempts += 1
+            center = pygame.math.Vector2(
+                random.uniform(ARENA_PADDING + VILLAGE_RADIUS, WIDTH - ARENA_PADDING - VILLAGE_RADIUS),
+                random.uniform(ARENA_PADDING + VILLAGE_RADIUS, HEIGHT - ARENA_PADDING - VILLAGE_RADIUS),
+            )
+            if center.distance_to(CASTLE_POS) < VILLAGE_MIN_CASTLE_DIST:
+                continue
+            if any(center.distance_to(other.center) < VILLAGE_MIN_SEPARATION for other in villages):
+                continue
+            if any(tree.pos.distance_to(center) < tree.radius + 40 for tree in self.trees):
+                continue
+            huts: List[Hut] = []
+            hut_target = random.randint(*VILLAGE_HUT_COUNT_RANGE)
+            hut_attempts = 0
+            while len(huts) < hut_target and hut_attempts < 250:
+                hut_attempts += 1
+                angle = random.uniform(0, 2 * math.pi)
+                radius = random.uniform(18, VILLAGE_RADIUS)
+                offset = pygame.math.Vector2(math.cos(angle), math.sin(angle)) * radius
+                candidate = center + offset
+                if not self._within_bounds(candidate, HUT_SIZE):
+                    continue
+                if candidate.distance_to(CASTLE_POS) < VILLAGE_MIN_CASTLE_DIST - 20:
+                    continue
+                if any(candidate.distance_to(hut.center) < HUT_SIZE * 1.8 for hut in huts):
+                    continue
+                if any(tree.pos.distance_to(candidate) < tree.radius + 18 for tree in self.trees):
+                    continue
+                huts.append(Hut(candidate))
+            if len(huts) < 4:
+                continue
+            well_pos = self._find_clear_point(center, 14, 34, villages, huts)
+            if well_pos is None:
+                continue
+            chest_count = random.randint(1, 2)
+            chests: List[Chest] = []
+            for _ in range(chest_count):
+                chest_pos = self._find_clear_point(center, 20, VILLAGE_RADIUS, villages, huts, extra=16, chests=chests)
+                if chest_pos is not None:
+                    chests.append(Chest(chest_pos))
+            if not chests:
+                continue
+            village = Village(center, huts, Well(well_pos), chests, villagers=[])
+            villagers_count = random.randint(3, 6)
+            for _ in range(villagers_count):
+                hut = random.choice(huts)
+                spawn = pygame.math.Vector2(hut.center)
+                village.villagers.append(Villager(spawn.copy(), spawn.copy(), village))
+            villages.append(village)
+        return villages
+
+    def _find_clear_point(
+        self,
+        origin: pygame.math.Vector2,
+        min_radius: float,
+        max_radius: float,
+        villages: Optional[List[Village]] = None,
+        huts: Optional[List[Hut]] = None,
+        extra: float = 12,
+        chests: Optional[List[Chest]] = None,
+    ) -> Optional[pygame.math.Vector2]:
+        for _ in range(80):
+            angle = random.uniform(0, 2 * math.pi)
+            radius = random.uniform(min_radius, max_radius)
+            pos = origin + pygame.math.Vector2(math.cos(angle), math.sin(angle)) * radius
+            if not self._within_bounds(pos, extra):
+                continue
+            if not self.is_clear(pos, extra, villages):
+                continue
+            if huts and any(hut.rect.inflate(extra * 2, extra * 2).collidepoint(pos.xy) for hut in huts):
+                continue
+            if chests and any(pygame.math.Vector2(chest.pos).distance_to(pos) < extra for chest in chests):
+                continue
+            return pos
+        return None
+
+    def _within_bounds(self, pos: pygame.math.Vector2, padding: float) -> bool:
+        return (
+            ARENA_PADDING + padding <= pos.x <= WIDTH - ARENA_PADDING - padding
+            and ARENA_PADDING + padding <= pos.y <= HEIGHT - ARENA_PADDING - padding
+        )
+
+    def is_clear(
+        self,
+        pos: pygame.math.Vector2,
+        clearance: float,
+        villages: Optional[List[Village]] = None,
+    ) -> bool:
+        for tree in self.trees:
+            if tree.pos.distance_to(pos) < tree.radius + clearance:
+                return False
+        check_villages = villages if villages is not None else self.villages
+        for village in check_villages:
+            if pos.distance_to(village.center) < clearance + 30:
+                return False
+            for hut in village.huts:
+                if hut.rect.inflate(clearance * 2, clearance * 2).collidepoint(pos.xy):
+                    return False
+        for start, end in self.road_segments:
+            if self._distance_to_segment(pos, start, end) <= ROAD_WIDTH / 2 + clearance:
+                return False
+        return True
+
+    @staticmethod
+    def _distance_to_segment(pos: pygame.math.Vector2, start: pygame.math.Vector2, end: pygame.math.Vector2) -> float:
+        seg = end - start
+        length_sq = seg.length_squared()
+        if length_sq == 0:
+            return pos.distance_to(start)
+        t = max(0.0, min(1.0, (pos - start).dot(seg) / length_sq))
+        projection = start + seg * t
+        return pos.distance_to(projection)
+
+    def _generate_roads(self) -> None:
+        castle_center = CASTLE_POS
+        for village in self.villages:
+            self._add_road(castle_center, village.center)
+        for i, village in enumerate(self.villages):
+            for other in self.villages[i + 1 :]:
+                if village.center.distance_to(other.center) <= VILLAGE_MIN_SEPARATION * 1.3:
+                    self._add_road(village.center, other.center)
+        self.road_mask = pygame.mask.from_surface(self.road_surface)
+
+    def _add_road(self, start: pygame.math.Vector2, end: pygame.math.Vector2) -> None:
+        segment = (start.copy(), end.copy())
+        self.road_segments.append(segment)
+        pygame.draw.line(self.road_surface, (90, 90, 90, 255), start.xy, end.xy, ROAD_WIDTH)
+
+    def _build_canopy_overlay(self) -> pygame.Surface:
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        for patch in self.forest_patches:
+            for tree in patch.trees:
+                pygame.draw.circle(overlay, (10, 60, 20, 90), tree.pos.xy, int(tree.radius + FOREST_CANOPY_EXTRA))
+        return overlay
+
+    # --- Utility helpers ---
+    def update(self, dt: float, knight: "Knight", units: List["Unit"], game: "Game") -> None:
+        for village in self.villages:
+            for villager in village.villagers:
+                villager.update(dt, self, knight, units, game)
+            village.alarm_active = any(v.alarmed for v in village.villagers)
+            self._update_well(village, knight, game, dt)
+            self._update_chests(village, knight, game, dt)
+        for shard in list(self.valor_shards):
+            shard.timer += dt
+            if knight.pos.distance_to(shard.pos) <= SHARD_COLLECT_RADIUS:
+                knight.collect_valor_shard()
+                self.valor_shards.remove(shard)
+
+    def _update_well(self, village: Village, knight: "Knight", game: "Game", dt: float) -> None:
+        distance = knight.pos.distance_to(village.well.pos)
+        if distance <= WELL_HEAL_RADIUS and knight.vel.length() < 6:
+            village.well.timer += dt
+            if village.well.timer >= WELL_HEAL_TIME and knight.hp < KNIGHT_HP:
+                village.well.timer = 0.0
+                knight.hp = min(KNIGHT_HP, knight.hp + 1)
+                game.spawn_noise(village.well.pos, WELL_NOISE_STRENGTH)
+        else:
+            village.well.timer = max(0.0, village.well.timer - dt * 0.5)
+
+    def _update_chests(self, village: Village, knight: "Knight", game: "Game", dt: float) -> None:
+        for chest in village.chests:
+            if chest.opened:
+                continue
+            distance = knight.pos.distance_to(chest.pos)
+            if distance <= CHEST_INTERACT_RADIUS:
+                chest.open_timer += dt
+                if chest.open_timer >= CHEST_OPEN_TIME:
+                    chest.opened = True
+                    game.spawn_noise(chest.pos, CHEST_NOISE_STRENGTH)
+                    game.anchors.boost_sector(chest.pos, 14.0)
+                    self.valor_shards.append(ValorShard(chest.pos.copy()))
+            else:
+                chest.open_timer = max(0.0, chest.open_timer - dt * 0.5)
+
+    def draw_base(self, surface: pygame.Surface) -> None:
+        for patch in self.forest_patches:
+            for tree in patch.trees:
+                pygame.draw.circle(surface, (24, 70, 34), tree.pos.xy, int(tree.radius))
+        surface.blit(self.road_surface, (0, 0))
+        for village in self.villages:
+            for hut in village.huts:
+                pygame.draw.rect(surface, (140, 90, 60), hut.rect)
+            well_rect = pygame.Rect(0, 0, WELL_SIZE, WELL_SIZE)
+            well_rect.center = village.well.pos.xy
+            pygame.draw.rect(surface, (70, 140, 200), well_rect)
+            for chest in village.chests:
+                rect = pygame.Rect(0, 0, CHEST_SIZE, CHEST_SIZE)
+                rect.center = chest.pos.xy
+                color = (200, 170, 60) if not chest.opened else (160, 130, 50)
+                pygame.draw.rect(surface, color, rect)
+            if village.alarm_active:
+                points = [
+                    (village.center.x, village.center.y - 18),
+                    (village.center.x - 6, village.center.y - 6),
+                    (village.center.x + 6, village.center.y - 6),
+                ]
+                pygame.draw.polygon(surface, (200, 30, 30), points)
+        for shard in self.valor_shards:
+            rect = pygame.Rect(0, 0, SHARD_SIZE, SHARD_SIZE)
+            rect.center = shard.pos.xy
+            color = (220, 220, 240) if int(shard.timer * 6) % 2 == 0 else (255, 255, 255)
+            pygame.draw.rect(surface, color, rect)
+        for village in self.villages:
+            for villager in village.villagers:
+                villager.draw(surface)
+
+    def draw_canopy(self, surface: pygame.Surface) -> None:
+        surface.blit(self.canopy_overlay, (0, 0))
+
+    def draw_debug(self, surface: pygame.Surface) -> None:
+        for patch in self.forest_patches:
+            for tree in patch.trees:
+                pygame.draw.circle(surface, (40, 160, 70), tree.pos.xy, int(tree.radius), 1)
+        for village in self.villages:
+            pygame.draw.circle(surface, (240, 120, 120), village.center.xy, 4)
+            for hut in village.huts:
+                pygame.draw.rect(surface, (220, 160, 120), hut.rect, 1)
+        for start, end in self.road_segments:
+            pygame.draw.line(surface, (150, 150, 150), start.xy, end.xy, 1)
+
+    def resolve_circle_collisions(
+        self,
+        pos: pygame.math.Vector2,
+        radius: float,
+        velocity: Optional[pygame.math.Vector2] = None,
+    ) -> None:
+        for tree in self.trees:
+            delta = pos - tree.pos
+            dist = delta.length()
+            overlap = radius + tree.radius - dist
+            if overlap > 0:
+                if dist == 0:
+                    delta = pygame.math.Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
+                    dist = delta.length()
+                delta.scale_to_length(overlap + 0.1)
+                pos += delta
+                if velocity is not None:
+                    velocity -= velocity.project(delta)
+        for village in self.villages:
+            for hut in village.huts:
+                rect = hut.rect.inflate(radius * 2, radius * 2)
+                if rect.collidepoint(pos.xy):
+                    closest = pygame.math.Vector2(
+                        max(rect.left + radius, min(rect.right - radius, pos.x)),
+                        max(rect.top + radius, min(rect.bottom - radius, pos.y)),
+                    )
+                    push = pos - closest
+                    if push.length_squared() == 0:
+                        push = pygame.math.Vector2(1, 0)
+                    push.scale_to_length(radius)
+                    pos.update(closest.x + push.x, closest.y + push.y)
+                    if velocity is not None:
+                        velocity -= velocity.project(push)
+
+    def clamp_to_bounds(self, pos: pygame.math.Vector2, radius: float) -> None:
+        pos.x = max(ARENA_PADDING + radius, min(WIDTH - ARENA_PADDING - radius, pos.x))
+        pos.y = max(ARENA_PADDING + radius, min(HEIGHT - ARENA_PADDING - radius, pos.y))
+
+    def is_on_road(self, pos: pygame.math.Vector2) -> bool:
+        x = int(pos.x)
+        y = int(pos.y)
+        if 0 <= x < self.road_mask.get_size()[0] and 0 <= y < self.road_mask.get_size()[1]:
+            return self.road_mask.get_at((x, y))
+        return False
+
+    def get_speed_multiplier(self, pos: pygame.math.Vector2, entity: str) -> float:
+        if self.is_on_road(pos):
+            return ROAD_SPEED_MULT
+        if entity == "knight" and self.knight_under_canopy(pos):
+            return KNIGHT_CANOPY_SPEED_MULT
+        return 1.0
+
+    def knight_under_canopy(self, pos: pygame.math.Vector2) -> bool:
+        return any(patch.under_canopy(pos) for patch in self.forest_patches)
+
+    def nearest_road_direction(
+        self, pos: pygame.math.Vector2, away_from: Optional[pygame.math.Vector2]
+    ) -> Tuple[pygame.math.Vector2, Optional[pygame.math.Vector2]]:
+        best_dist = float("inf")
+        best_seg: Optional[Tuple[pygame.math.Vector2, pygame.math.Vector2]] = None
+        best_point: Optional[pygame.math.Vector2] = None
+        for start, end in self.road_segments:
+            seg_vec = end - start
+            seg_len_sq = seg_vec.length_squared()
+            if seg_len_sq == 0:
+                continue
+            t = max(0.0, min(1.0, (pos - start).dot(seg_vec) / seg_len_sq))
+            point = start + seg_vec * t
+            dist = pos.distance_to(point)
+            if dist < best_dist:
+                best_dist = dist
+                best_seg = (start, end)
+                best_point = point
+        if best_seg is None:
+            return pygame.math.Vector2(), None
+        direction = (best_seg[1] - best_seg[0])
+        if direction.length_squared() > 0:
+            direction.normalize_ip()
+            if away_from is not None:
+                if (pos + direction * 10).distance_to(away_from) < (pos - direction * 10).distance_to(away_from):
+                    direction = -direction
+        return direction, best_point
+
+    def line_blocked(self, start: pygame.math.Vector2, end: pygame.math.Vector2) -> bool:
+        min_x = min(start.x, end.x) - 10
+        max_x = max(start.x, end.x) + 10
+        min_y = min(start.y, end.y) - 10
+        max_y = max(start.y, end.y) + 10
+        line_rect = pygame.Rect(int(min_x), int(min_y), int(max_x - min_x) + 1, int(max_y - min_y) + 1)
+        for patch in self.forest_patches:
+            if not patch.bounds.colliderect(line_rect):
+                continue
+            for tree in patch.trees:
+                if self._line_circle_intersection(start, end, tree.pos, tree.radius):
+                    return True
+        return False
+
+    @staticmethod
+    def _line_circle_intersection(
+        start: pygame.math.Vector2,
+        end: pygame.math.Vector2,
+        center: pygame.math.Vector2,
+        radius: float,
+    ) -> bool:
+        d = end - start
+        f = start - center
+        a = d.dot(d)
+        b = 2 * f.dot(d)
+        c = f.dot(f) - radius * radius
+        discriminant = b * b - 4 * a * c
+        if discriminant < 0:
+            return False
+        discriminant = math.sqrt(discriminant)
+        t1 = (-b - discriminant) / (2 * a)
+        t2 = (-b + discriminant) / (2 * a)
+        return (0 <= t1 <= 1) or (0 <= t2 <= 1)
+
+    def line_clear(
+        self,
+        start: pygame.math.Vector2,
+        end: pygame.math.Vector2,
+        debug_lines: Optional[List[Tuple[Tuple[float, float], Tuple[float, float]]]] = None,
+    ) -> bool:
+        blocked = self.line_blocked(start, end)
+        if not blocked and debug_lines is not None:
+            debug_lines.append((start.xy, end.xy))
+        return not blocked
+
+    def any_village_alarmed(self) -> bool:
+        return any(village.alarm_active for village in self.villages)
+
+    def get_alarm_focus(self) -> Optional[pygame.math.Vector2]:
+        for village in self.villages:
+            if village.alarm_active:
+                return village.center.copy()
+        return None
+
+    def villager_counts(self) -> Tuple[int, int]:
+        total = 0
+        alarmed = 0
+        for village in self.villages:
+            total += len(village.villagers)
+            alarmed += sum(1 for v in village.villagers if v.alarmed)
+        return total, alarmed
 
 @dataclass
 class Seal:
@@ -172,16 +833,20 @@ class Knight:
         self.swing_timer = 0.0
         self.swing_angle: Optional[float] = None
         self.swing_cooldown = 0.0
+        self.swing_cooldown_modifier = 0.0
+        self.swing_cooldown_duration = SWING_COOLDOWN
         self.castle_timer = 0.0
         self.last_click_time = -999.0
+        self.on_road = False
+        self.under_canopy = False
 
     def set_target(self, pos: pygame.math.Vector2, now: float, noise_cb) -> None:
         if now - self.last_click_time <= KNIGHT_SPRINT_CLICK_INTERVAL:
-            noise_cb(self.pos)
+            noise_cb(self.pos, 1.0)
         self.last_click_time = now
         self.target = pos
 
-    def update(self, dt: float) -> None:
+    def update(self, dt: float, world: "World") -> None:
         direction = self.target - self.pos
         distance = direction.length()
         if distance > 2:
@@ -189,19 +854,33 @@ class Knight:
             self.vel += direction * KNIGHT_ACCEL * dt
         else:
             self.vel *= max(0.0, 1.0 - KNIGHT_FRICTION * dt)
+        self.on_road = world.is_on_road(self.pos)
+        self.under_canopy = world.knight_under_canopy(self.pos)
+        max_speed = KNIGHT_MAX_SPEED
+        if self.on_road:
+            max_speed *= ROAD_SPEED_MULT
+        elif self.under_canopy:
+            max_speed *= KNIGHT_CANOPY_SPEED_MULT
         speed = self.vel.length()
-        if speed > KNIGHT_MAX_SPEED:
-            self.vel.scale_to_length(KNIGHT_MAX_SPEED)
+        if speed > max_speed:
+            self.vel.scale_to_length(max_speed)
         self.pos += self.vel * dt
+        world.resolve_circle_collisions(self.pos, KNIGHT_COLLISION_RADIUS * 0.6, self.vel)
+        world.clamp_to_bounds(self.pos, KNIGHT_COLLISION_RADIUS * 0.5)
         self._clamp()
 
         if self.swing_timer > 0.0:
             self.swing_timer = max(0.0, self.swing_timer - dt)
             if self.swing_timer <= 0.0:
                 self.swing_angle = None
-                self.swing_cooldown = SWING_COOLDOWN
+                self.swing_cooldown = self.swing_cooldown_duration
         if self.swing_cooldown > 0.0:
             self.swing_cooldown = max(0.0, self.swing_cooldown - dt)
+
+    def collect_valor_shard(self) -> None:
+        self.swing_cooldown_modifier = min(0.3, self.swing_cooldown_modifier + 0.1)
+        self.swing_cooldown_duration = SWING_COOLDOWN * (1.0 - self.swing_cooldown_modifier)
+        self.swing_cooldown = min(self.swing_cooldown, self.swing_cooldown_duration)
 
     def start_attack(self, units: List["Unit"]) -> List["Unit"]:
         if self.swing_timer > 0.0 or self.swing_cooldown > 0.0:
@@ -285,15 +964,29 @@ class Unit:
         self.spiral_origin: Optional[pygame.math.Vector2] = None
         self.spiral_angle = 0.0
         self.spiral_radius = 12.0
+        self.road_persist = 0.0
 
-    def update(self, dt: float, knight: Knight, last_known: Optional[pygame.math.Vector2]) -> Tuple[bool, bool]:
+    def update(
+        self,
+        dt: float,
+        knight: Knight,
+        last_known: Optional[pygame.math.Vector2],
+        world: World,
+        los_debug: Optional[List[Tuple[Tuple[float, float], Tuple[float, float]]]],
+    ) -> Tuple[bool, bool]:
         if not self.alive:
             return False, False
         detected = False
         just_revealed = False
 
         distance = self.pos.distance_to(knight.pos)
-        if distance <= self.detection:
+        effective_detection = self.detection
+        if world.knight_under_canopy(knight.pos):
+            effective_detection *= 0.65
+        los_clear = False
+        if distance <= effective_detection:
+            los_clear = world.line_clear(self.pos, knight.pos, los_debug)
+        if los_clear:
             self.detect_timer += dt
         else:
             self.detect_timer = max(0.0, self.detect_timer - dt * 0.5)
@@ -302,7 +995,7 @@ class Unit:
                 self.howled = False
 
         if self.unit_type == "PRIEST":
-            if distance <= PRIEST_REVEAL_RADIUS:
+            if distance <= PRIEST_REVEAL_RADIUS and (los_clear or world.line_clear(self.pos, knight.pos)):
                 self.reveal_timer += dt
                 if self.reveal_timer >= PRIEST_REVEAL_TIME:
                     self.reveal_timer = PRIEST_REVEAL_TIME
@@ -326,13 +1019,18 @@ class Unit:
         elif self.state == "chase" and self.state_timer <= 0.0:
             self.start_spiral(last_known)
 
+        if world.is_on_road(self.pos):
+            self.road_persist = 2.0
+        else:
+            self.road_persist = max(0.0, self.road_persist - dt)
+
         if self.state == "idle":
-            self.idle_to_anchor(dt)
+            self.idle_to_anchor(dt, world)
         elif self.state == "chase":
-            self.chase_target(knight.pos, dt)
+            self.chase_target(knight.pos, dt, world)
             self.state_timer = max(0.0, self.state_timer - dt)
         elif self.state == "investigate":
-            self.chase_target(self.target, dt)
+            self.chase_target(self.target, dt, world)
             self.state_timer = max(0.0, self.state_timer - dt)
             if self.state_timer <= 0.0:
                 self.state = "idle"
@@ -345,14 +1043,18 @@ class Unit:
                 self.spiral_radius += SPIRAL_RADIUS_SPEED * dt
                 origin = self.spiral_origin or self.pos
                 offset = pygame.math.Vector2(math.cos(self.spiral_angle), math.sin(self.spiral_angle)) * self.spiral_radius
-                self.chase_target(origin + offset, dt)
+                self.chase_target(origin + offset, dt, world)
 
         self.pos += self.vel * dt
         self._clamp()
+        world.resolve_circle_collisions(self.pos, self.size * 1.4, self.vel)
+        world.clamp_to_bounds(self.pos, self.size)
         return detected, just_revealed
 
-    def idle_to_anchor(self, dt: float) -> None:
-        if self.unit_type == "SCOUT":
+    def idle_to_anchor(self, dt: float, world: World) -> None:
+        if self.road_persist > 0.0 and self.target in self.anchors:
+            anchor_pos = self.target
+        elif self.unit_type == "SCOUT":
             anchor_pos = self.anchor_manager.highest_anchor().copy()
         else:
             if self.target not in self.anchors or self.pos.distance_to(self.target) < 18:
@@ -362,13 +1064,14 @@ class Unit:
         if self.unit_type == "SCOUT" and self.pos.distance_to(anchor_pos) < 18:
             anchor_pos = self.anchor_manager.highest_anchor().copy()
         self.target = anchor_pos
-        self.chase_target(self.target, dt)
+        self.chase_target(self.target, dt, world)
 
-    def chase_target(self, target: pygame.math.Vector2, dt: float) -> None:
+    def chase_target(self, target: pygame.math.Vector2, dt: float, world: World) -> None:
         direction = target - self.pos
         if direction.length_squared() > 4:
             direction.normalize_ip()
-            self.vel = direction * self.speed
+            speed = self.speed * world.get_speed_multiplier(self.pos, "unit")
+            self.vel = direction * speed
         else:
             self.vel *= max(0.0, 1.0 - 5 * dt)
 
@@ -442,6 +1145,10 @@ class AnchorManager:
         idx = max(range(len(self.anchors)), key=lambda i: self.suspicion[i])
         return self.anchors[idx].copy()
 
+    def nearest_anchor_to(self, pos: pygame.math.Vector2) -> pygame.math.Vector2:
+        idx = min(range(len(self.anchors)), key=lambda i: self.anchors[i].distance_to(pos))
+        return self.anchors[idx].copy()
+
     def draw_debug(self, surface: pygame.Surface, font: pygame.font.Font) -> None:
         for i, anchor in enumerate(self.anchors):
             pygame.draw.circle(surface, (200, 80, 80), anchor, 4)
@@ -464,8 +1171,12 @@ class DarkLordAI:
         self.anchors = anchors
         self.last_reveal_pos: Optional[pygame.math.Vector2] = None
         self.last_reveal_time = -999.0
+        self.alarm_target: Optional[pygame.math.Vector2] = None
+        self.alarm_active = False
 
-    def update(self, dt: float, knight: Knight, seals: List[Seal], now: float) -> None:
+    def update(self, dt: float, knight: Knight, seals: List[Seal], now: float, world: World) -> None:
+        self.alarm_target = world.get_alarm_focus()
+        self.alarm_active = self.alarm_target is not None
         self.energy += ENERGY_PER_SEC * dt
         self.spawn_timer -= dt
         self.units = [u for u in self.units if u.alive]
@@ -478,6 +1189,8 @@ class DarkLordAI:
             return
         seal_channeling = any(seal.channeling for seal in seals)
         priority: List[str] = []
+        if self.alarm_active:
+            priority.extend(["SCOUT", "SCOUT"])
         if seal_channeling:
             priority.extend(["SCOUT", "SCOUT", "TANK"])
         elif self.last_reveal_pos is not None and now - self.last_reveal_time < 4.0:
@@ -511,7 +1224,11 @@ class DarkLordAI:
                     unit.state_timer = 3.5
                 self.units.append(unit)
                 spawned_any = True
-        if not spawned_any and self.energy >= UNIT_DATA["SCOUT"]["cost"] and len(self.units) < MAX_UNITS:
+        if (
+            not spawned_any
+            and self.energy >= UNIT_DATA["SCOUT"]["cost"]
+            and len(self.units) < MAX_UNITS
+        ):
             self.energy -= UNIT_DATA["SCOUT"]["cost"]
             unit = Unit("SCOUT", self.choose_spawn_position("SCOUT"), self.anchors)
             self.units.append(unit)
@@ -520,6 +1237,10 @@ class DarkLordAI:
         if unit_type in ("TANK", "PRIEST") and self.last_reveal_pos is not None and random.random() < 0.6:
             offset = pygame.math.Vector2(random.uniform(-30, 30), random.uniform(-30, 30))
             return self.last_reveal_pos + offset
+        if self.alarm_target is not None and random.random() < 0.65:
+            anchor = self.anchors.nearest_anchor_to(self.alarm_target)
+            offset = pygame.math.Vector2(random.uniform(-25, 25), random.uniform(-25, 25))
+            return anchor + offset
         angle = random.random() * 2 * math.pi
         base = CASTLE_POS + pygame.math.Vector2(math.cos(angle), math.sin(angle)) * (CASTLE_RADIUS + 40)
         if random.random() < 0.4:
@@ -541,6 +1262,7 @@ class Game:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(HUD_FONT_NAME, 18)
         self.big_font = pygame.font.SysFont(HUD_FONT_NAME, 48)
+        self.world = World()
         self.knight = Knight()
         self.anchors = AnchorManager()
         self.ai = DarkLordAI(self.anchors)
@@ -555,6 +1277,8 @@ class Game:
         self.defeat = False
         self.running = True
         self.debug_overlay = False
+        self.show_canopy = False
+        self.los_debug_lines: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
 
     def generate_seals(self) -> List[Seal]:
         seals: List[Seal] = []
@@ -565,6 +1289,10 @@ class Game:
             radius = random.uniform(SEAL_MIN_CASTLE_DIST, min(WIDTH, HEIGHT) / 2 - 80)
             pos = CASTLE_POS + pygame.math.Vector2(math.cos(angle), math.sin(angle)) * radius
             if any(pos.distance_to(s.pos) < SEAL_MIN_SEPARATION for s in seals):
+                continue
+            if not self.world.is_clear(pos, 30):
+                continue
+            if self.world.is_on_road(pos):
                 continue
             seals.append(Seal(pos))
         return seals
@@ -589,20 +1317,23 @@ class Game:
                     self.running = False
                 elif event.key == DEBUG_TOGGLE_KEY:
                     self.debug_overlay = not self.debug_overlay
+                elif event.key == pygame.K_b:
+                    self.show_canopy = not self.show_canopy
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 self.knight.set_target(pygame.math.Vector2(event.pos), now, self.spawn_noise)
 
-    def spawn_noise(self, pos: pygame.math.Vector2) -> None:
-        self.noise_pings.append(NoisePing(pos.copy()))
-        self.anchors.boost_from_pos(pos, SUS_NOISE_SCALE)
+    def spawn_noise(self, pos: pygame.math.Vector2, strength: float = 1.0) -> None:
+        self.noise_pings.append(NoisePing(pos.copy(), strength=strength))
+        self.anchors.boost_from_pos(pos, SUS_NOISE_SCALE * strength)
         for unit in self.ai.units:
             if unit.unit_type == "SCOUT" and unit.state == "idle":
                 if unit.pos.distance_to(pos) < 180:
                     unit.investigate(pos)
 
     def update(self, dt: float, now: float) -> None:
-        self.knight.update(dt)
+        self.knight.update(dt, self.world)
         self.anchors.decay(dt)
+        self.world.update(dt, self.knight, self.ai.units, self)
 
         for seal in list(self.seals):
             completed, started = seal.update(self.knight.pos, dt)
@@ -617,11 +1348,13 @@ class Game:
             self.shield_active = False
             self.pulses.append(PulseEffect(CASTLE_POS.copy(), duration=0.6))
 
-        self.ai.update(dt, self.knight, self.seals, now)
+        self.ai.update(dt, self.knight, self.seals, now, self.world)
 
         reveal_triggered = False
+        self.los_debug_lines = [] if self.debug_overlay else []
+        los_list = self.los_debug_lines if self.debug_overlay else None
         for unit in self.ai.units:
-            detected, just_revealed = unit.update(dt, self.knight, self.last_known_pos)
+            detected, just_revealed = unit.update(dt, self.knight, self.last_known_pos, self.world, los_list)
             if detected:
                 self.last_known_pos = self.knight.pos.copy()
                 self.last_known_timer = 4.0
@@ -695,6 +1428,9 @@ class Game:
 
     def draw(self) -> None:
         self.screen.fill((18, 18, 24))
+        self.world.draw_base(self.screen)
+        if self.show_canopy:
+            self.world.draw_canopy(self.screen)
         pygame.draw.circle(self.screen, (130, 0, 180), CASTLE_POS, CASTLE_RADIUS)
         if self.shield_active:
             pygame.draw.circle(self.screen, (150, 90, 220), CASTLE_POS, CASTLE_RADIUS + CASTLE_SHIELD_EXTRA, 2)
@@ -709,7 +1445,10 @@ class Game:
         self.knight.draw(self.screen)
         self.knight.draw_swing(self.screen)
         if self.debug_overlay:
+            self.world.draw_debug(self.screen)
             self.anchors.draw_debug(self.screen, self.font)
+            for start, end in self.los_debug_lines:
+                pygame.draw.line(self.screen, (120, 200, 200), start, end, 1)
         if self.victory:
             text = self.big_font.render("Victory!", True, (120, 255, 120))
             self.screen.blit(text, (WIDTH / 2 - text.get_width() / 2, HEIGHT / 2 - text.get_height() / 2))
@@ -720,7 +1459,11 @@ class Game:
         pygame.display.flip()
 
     def draw_hud(self) -> None:
-        hud_text = f"HP: {int(self.knight.hp)}  Evil: {int(self.ai.energy)}  Units: {len(self.ai.units)}/{MAX_UNITS}  Seals: {self.broken_seals}/{SEAL_COUNT}"
+        total_villagers, alarmed = self.world.villager_counts()
+        hud_text = (
+            f"HP: {int(self.knight.hp)}  Evil: {int(self.ai.energy)}  Units: {len(self.ai.units)}/{MAX_UNITS}"
+            f"  Seals: {self.broken_seals}/{SEAL_COUNT}  Villagers: {total_villagers}  Alarmed: {alarmed}"
+        )
         text = self.font.render(hud_text, True, (220, 220, 220))
         self.screen.blit(text, (12, 12))
         if self.knight.castle_timer > 0.0:
