@@ -69,6 +69,12 @@ export class DarkLordAI {
       return;
     }
 
+    if (game.isAnyVillageAlarmed()) {
+      if (this.spawnAlarmScout(game)) {
+        return;
+      }
+    }
+
     this.spawnCoverageScout(game);
   }
 
@@ -98,6 +104,22 @@ export class DarkLordAI {
   private spawnCoverageScout(game: Game): void {
     const anchor = game.getNextAnchor();
     this.spawnUnit(game, 'scout', this.jitter(anchor, 14));
+  }
+
+  private spawnAlarmScout(game: Game): boolean {
+    const center = game.getAlarmedVillageCenter();
+    if (!center) {
+      return false;
+    }
+    const anchor = game.getNearestAnchorTo(center);
+    const primary = this.spawnUnit(game, 'scout', this.jitter(anchor, 12));
+    if (!primary) {
+      return false;
+    }
+    if (this.canAfford('scout') && Math.random() < 0.45) {
+      this.spawnUnit(game, 'scout', this.jitter(anchor, 18));
+    }
+    return true;
   }
 
   private spawnUnit(game: Game, type: UnitType, position: Vector2): boolean {

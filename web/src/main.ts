@@ -36,6 +36,8 @@ window.addEventListener('keydown', (event) => {
   } else if (event.key === 'F1') {
     event.preventDefault();
     game.toggleAnchorDebug();
+  } else if (event.key.toLowerCase() === 'b') {
+    game.toggleCanopy();
   }
 });
 

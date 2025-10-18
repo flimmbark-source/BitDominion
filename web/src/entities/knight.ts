@@ -3,7 +3,6 @@ import {
   ARC_WIDTH_DEG,
   CASTLE_POS,
   FPS,
-  HEIGHT,
   KNIGHT_ACCEL,
   KNIGHT_COLOR,
   KNIGHT_FRICTION,
@@ -13,10 +12,10 @@ import {
   MELEE_RANGE,
   SWING_ARC_POINTS,
   SWING_COOLDOWN,
-  SWING_DURATION,
-  WIDTH
+  SWING_DURATION
 } from '../config/constants';
 import { Vector2 } from '../math/vector2';
+import type { World } from '../world';
 import type { DarkUnit } from './darkUnit';
 
 export class Knight {
@@ -33,7 +32,7 @@ export class Knight {
     this.target.copy(target);
   }
 
-  update(dt: number): void {
+  update(dt: number, world: World): void {
     const dtRatio = dt * FPS;
     const toTarget = this.target.clone().subtract(this.pos);
     const distance = toTarget.length();
@@ -46,13 +45,15 @@ export class Knight {
     }
 
     this.velocity.scale(Math.pow(KNIGHT_FRICTION, dtRatio));
+    world.applyTerrainSteering(this, KNIGHT_SIZE / 2, dt);
 
     if (distance <= KNIGHT_STOP_DISTANCE && this.velocity.lengthSq() < 0.05) {
       this.velocity.set(0, 0);
     }
 
     this.pos.add(this.velocity.clone().scale(dtRatio));
-    this.clampToBounds();
+    world.resolveStaticCollisions(this.pos, KNIGHT_SIZE / 2);
+    world.constrainToArena(this, KNIGHT_SIZE / 2);
 
     if (this.swingTimer > 0) {
       this.swingTimer = Math.max(0, this.swingTimer - dt);
@@ -148,10 +149,5 @@ export class Knight {
     let diff = angle - baseAngle;
     diff = Math.abs(((diff + Math.PI) % (Math.PI * 2)) - Math.PI);
     return diff <= (ARC_WIDTH_DEG * Math.PI) / 360;
-  }
-
-  private clampToBounds(): void {
-    const half = KNIGHT_SIZE / 2;
-    this.pos.clamp(half, half, WIDTH - half, HEIGHT - half);
   }
 }
