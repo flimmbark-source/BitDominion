@@ -3,6 +3,8 @@ import {
   CHEST_CLOSED_COLOR,
   CHEST_OPEN_COLOR,
   CHEST_OPEN_RADIUS,
+  CASTLE_POS,
+  CASTLE_WIN_RADIUS,
   HEIGHT,
   HUT_FILL_COLOR,
   HUT_OUTLINE_COLOR,
@@ -109,8 +111,8 @@ export class World {
 
   constructor() {
     const rand = mulberry32(0x5123abcd);
-    this.buildForests(rand);
     this.buildVillages(rand);
+    this.buildForests(rand);
   }
 
   beginFrame(dt: number): void {
@@ -320,32 +322,78 @@ export class World {
   }
 
   private buildForests(rand: () => number): void {
-    const patchCenters = [
-      new Vector2(170, 210),
-      new Vector2(600, 190),
-      new Vector2(540, 560),
-      new Vector2(220, 590)
-    ];
+    const columns = 9;
+    const rows = 9;
+    const cellWidth = (WIDTH - ARENA_PADDING * 2) / columns;
+    const cellHeight = (HEIGHT - ARENA_PADDING * 2) / rows;
+    const treePadding = 6;
+    const castleClearRadius = CASTLE_WIN_RADIUS + 35;
 
-    for (let i = 0; i < patchCenters.length; i++) {
-      const center = patchCenters[i].clone();
-      const radius = 60 + i * 10;
-      const baseTreeCount = 12 + i * 4;
-      const treeCount = baseTreeCount + Math.floor(rand() * 5);
-      const trees: Tree[] = [];
-      for (let t = 0; t < treeCount; t++) {
-        const angle = rand() * Math.PI * 2;
-        const distance = Math.sqrt(rand()) * radius;
-        const offset = new Vector2(Math.cos(angle), Math.sin(angle)).scale(distance);
-        offset.x += (rand() - 0.5) * 18;
-        offset.y += (rand() - 0.5) * 18;
-        const position = center.clone().add(offset);
-        position.x = clamp(position.x, ARENA_PADDING, WIDTH - ARENA_PADDING);
-        position.y = clamp(position.y, ARENA_PADDING, HEIGHT - ARENA_PADDING);
-        const treeRadius = 12 + rand() * 8;
-        this.trees.push({ position: position.clone(), radius: treeRadius });
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < columns; col++) {
+        const cellCenterX = ARENA_PADDING + cellWidth * (col + 0.5);
+        const cellCenterY = ARENA_PADDING + cellHeight * (row + 0.5);
+        const densityRoll = rand();
+        let treeCount = 0;
+        if (densityRoll > 0.25) {
+          treeCount = 1;
+          if (densityRoll > 0.65) {
+            treeCount++;
+          }
+          if (densityRoll > 0.92) {
+            treeCount++;
+          }
+        }
+
+        for (let i = 0; i < treeCount; i++) {
+          let attempts = 0;
+          while (attempts < 6) {
+            const position = new Vector2(
+              cellCenterX + (rand() - 0.5) * cellWidth * 0.9,
+              cellCenterY + (rand() - 0.5) * cellHeight * 0.9
+            );
+            position.x = clamp(position.x, ARENA_PADDING, WIDTH - ARENA_PADDING);
+            position.y = clamp(position.y, ARENA_PADDING, HEIGHT - ARENA_PADDING);
+            const treeRadius = 11 + rand() * 8;
+            if (this.canPlaceTree(position, treeRadius, treePadding, castleClearRadius)) {
+              this.trees.push({ position: position.clone(), radius: treeRadius });
+              break;
+            }
+            attempts++;
+          }
+        }
       }
     }
+  }
+
+  private canPlaceTree(position: Vector2, radius: number, padding: number, castleClearRadius: number): boolean {
+    if (position.distanceTo(CASTLE_POS) < castleClearRadius + radius) {
+      return false;
+    }
+
+    for (const village of this.villages) {
+      const minVillageDistance = village.canopyRadius + radius + padding;
+      if (position.distanceTo(village.center) < minVillageDistance) {
+        return false;
+      }
+    }
+
+    for (const hut of this.huts) {
+      const halfW = hut.width / 2 + radius + padding;
+      const halfH = hut.height / 2 + radius + padding;
+      if (Math.abs(position.x - hut.center.x) <= halfW && Math.abs(position.y - hut.center.y) <= halfH) {
+        return false;
+      }
+    }
+
+    for (const tree of this.trees) {
+      const minDistance = tree.radius + radius + padding;
+      if (position.distanceTo(tree.position) < minDistance) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private buildVillages(rand: () => number): void {
