@@ -327,29 +327,29 @@ export class World {
   }
 
   private buildForests(rand: () => number): void {
-    const columns = 9;
-    const rows = 9;
+    const columns = 11;
+    const rows = 11;
     const cellWidth = (WIDTH - ARENA_PADDING * 2) / columns;
     const cellHeight = (HEIGHT - ARENA_PADDING * 2) / rows;
-    const treePadding = 6;
+    const treePadding = 4.5;
     const castleClearRadius = CASTLE_WIN_RADIUS + 35;
 
-    const denseZones = Array.from({ length: 5 }, () => ({
-      center: new Vector2(
-        ARENA_PADDING + rand() * (WIDTH - ARENA_PADDING * 2),
-        ARENA_PADDING + rand() * (HEIGHT - ARENA_PADDING * 2)
-      ),
-      radius: 120 + rand() * 80,
-      strength: 0.55 + rand() * 0.35
-    }));
-
-    const sparseZones = Array.from({ length: 3 }, () => ({
+    const denseZones = Array.from({ length: 7 }, () => ({
       center: new Vector2(
         ARENA_PADDING + rand() * (WIDTH - ARENA_PADDING * 2),
         ARENA_PADDING + rand() * (HEIGHT - ARENA_PADDING * 2)
       ),
       radius: 140 + rand() * 90,
-      strength: 0.45 + rand() * 0.25
+      strength: 0.6 + rand() * 0.35
+    }));
+
+    const sparseZones = Array.from({ length: 4 }, () => ({
+      center: new Vector2(
+        ARENA_PADDING + rand() * (WIDTH - ARENA_PADDING * 2),
+        ARENA_PADDING + rand() * (HEIGHT - ARENA_PADDING * 2)
+      ),
+      radius: 160 + rand() * 110,
+      strength: 0.5 + rand() * 0.25
     }));
 
     const computeZoneInfluence = (point: Vector2, zones: typeof denseZones, invert = false): number => {
@@ -371,18 +371,21 @@ export class World {
         const cellCenterY = ARENA_PADDING + cellHeight * (row + 0.5);
         const cellCenter = new Vector2(cellCenterX, cellCenterY);
 
-        let densityScore = rand() * 0.18;
+        let densityScore = rand() * 0.26;
         densityScore += computeZoneInfluence(cellCenter, denseZones);
         densityScore += computeZoneInfluence(cellCenter, sparseZones, true);
         densityScore = clamp(densityScore, 0, 1);
 
         let treeCount = 0;
-        if (densityScore > 0.1) {
+        if (densityScore > 0.08) {
           treeCount = 1;
-          if (densityScore > 0.35) {
+          if (densityScore > 0.25) {
             treeCount++;
           }
-          if (densityScore > 0.6) {
+          if (densityScore > 0.45) {
+            treeCount++;
+          }
+          if (densityScore > 0.65) {
             treeCount++;
           }
           if (densityScore > 0.82) {
@@ -394,7 +397,7 @@ export class World {
           continue;
         }
 
-        const localPadding = treePadding * (1.15 - densityScore * 0.5);
+        const localPadding = treePadding * (1.05 - densityScore * 0.45);
 
         for (let i = 0; i < treeCount; i++) {
           let attempts = 14;
@@ -411,6 +414,19 @@ export class World {
             }
           }
         }
+      }
+    }
+
+    const scatterAttempts = Math.round(columns * rows * 1.4);
+    for (let i = 0; i < scatterAttempts; i++) {
+      const position = new Vector2(
+        ARENA_PADDING + rand() * (WIDTH - ARENA_PADDING * 2),
+        ARENA_PADDING + rand() * (HEIGHT - ARENA_PADDING * 2)
+      );
+      const scatterRadius = 10 + rand() * 8;
+      const scatterPadding = treePadding * 0.75;
+      if (this.canPlaceTree(position, scatterRadius, Math.max(2, scatterPadding), castleClearRadius)) {
+        this.trees.push({ position, radius: scatterRadius });
       }
     }
   }
