@@ -345,23 +345,22 @@ export class World {
           }
         }
 
-        for (let i = 0; i < treeCount; i++) {
-          let attempts = 0;
-          while (attempts < 6) {
-            const position = new Vector2(
-              cellCenterX + (rand() - 0.5) * cellWidth * 0.9,
-              cellCenterY + (rand() - 0.5) * cellHeight * 0.9
-            );
-            position.x = clamp(position.x, ARENA_PADDING, WIDTH - ARENA_PADDING);
-            position.y = clamp(position.y, ARENA_PADDING, HEIGHT - ARENA_PADDING);
-            const treeRadius = 11 + rand() * 8;
-            if (this.canPlaceTree(position, treeRadius, treePadding, castleClearRadius)) {
-              this.trees.push({ position: position.clone(), radius: treeRadius });
-              break;
-            }
-            attempts++;
-          }
-        }
+    for (let i = 0; i < patchCenters.length; i++) {
+      const center = patchCenters[i].clone();
+      const radius = 60 + i * 10;
+      const baseTreeCount = 12 + i * 4;
+      const treeCount = baseTreeCount + Math.floor(rand() * 5);
+      for (let t = 0; t < treeCount; t++) {
+        const angle = rand() * Math.PI * 2;
+        const distance = Math.sqrt(rand()) * radius;
+        const offset = new Vector2(Math.cos(angle), Math.sin(angle)).scale(distance);
+        offset.x += (rand() - 0.5) * 18;
+        offset.y += (rand() - 0.5) * 18;
+        const position = center.clone().add(offset);
+        position.x = clamp(position.x, ARENA_PADDING, WIDTH - ARENA_PADDING);
+        position.y = clamp(position.y, ARENA_PADDING, HEIGHT - ARENA_PADDING);
+        const treeRadius = 12 + rand() * 8;
+        this.trees.push({ position: position.clone(), radius: treeRadius });
       }
     }
   }

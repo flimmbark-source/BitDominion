@@ -120,8 +120,9 @@ export class Game {
     if (!this.canSpawnMoreUnits()) {
       return false;
     }
+    const castleSpawn = this.getCastleEdgePoint(position);
     const half = UNIT_STATS[type].size / 2;
-    const clamped = position.clone().clamp(half, half, WIDTH - half, HEIGHT - half);
+    const clamped = castleSpawn.clamp(half, half, WIDTH - half, HEIGHT - half);
     this.units.push(new DarkUnit(clamped, type));
     return true;
   }
@@ -348,8 +349,7 @@ export class Game {
 
   private _spawnInitialUnits(count: number): void {
     for (let i = 0; i < count; i++) {
-      const position = this.getCastleEdgePoint();
-      this.spawnUnit('scout', position);
+      this.spawnUnit('scout', CASTLE_POS);
     }
   }
 
