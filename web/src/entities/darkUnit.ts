@@ -26,6 +26,10 @@ import type { Game } from '../game';
 import type { World } from '../world';
 import type { Knight } from './knight';
 
+const INVESTIGATION_ARRIVE_RADIUS = 6;
+const INVESTIGATION_TRAVEL_TIMEOUT = NOISE_INVESTIGATE_TIME * 3;
+const INVESTIGATION_ORBIT_SPEED = Math.PI * 0.9;
+
 export type DarkUnitBehavior = 'idle' | 'chasing' | 'searching' | 'investigating';
 
 export class DarkUnit {
@@ -48,6 +52,10 @@ export class DarkUnit {
   private searchOrigin: Vector2 | null = null;
   private investigationTimer = 0;
   private investigationTarget: Vector2 | null = null;
+  private investigationArrived = false;
+  private investigationTravelTimer = 0;
+  private investigationOrbitAngle = 0;
+  private investigationOrbitRadius = 0;
   private detectionTint = 0;
   private priestProximityTimer = 0;
   private priestRevealTimer = 0;
@@ -101,8 +109,7 @@ export class DarkUnit {
     }
 
     if (this.behavior === 'investigating' && this.detecting) {
-      this.investigationTimer = 0;
-      this.investigationTarget = null;
+      this.clearInvestigationState();
     }
 
     this.updateDetectionTint(dtRatio);
@@ -155,8 +162,12 @@ export class DarkUnit {
       return;
     }
     this.behavior = 'investigating';
-    this.investigationTimer = NOISE_INVESTIGATE_TIME;
     this.investigationTarget = position.clone();
+    this.investigationTimer = NOISE_INVESTIGATE_TIME;
+    this.investigationArrived = false;
+    this.investigationTravelTimer = 0;
+    this.investigationOrbitAngle = Math.random() * Math.PI * 2;
+    this.investigationOrbitRadius = 5 + Math.random() * 6;
   }
 
   notifyNoise(position: Vector2): void {
@@ -414,23 +425,45 @@ export class DarkUnit {
 
   private updateInvestigation(dt: number, stats: (typeof UNIT_STATS)[keyof typeof UNIT_STATS], dtRatio: number): void {
     if (!this.investigationTarget) {
-      this.behavior = 'idle';
+      this.finishInvestigation();
       return;
+    }
+
+    this.investigationTravelTimer += dt;
+    const distance = this.pos.distanceTo(this.investigationTarget);
+
+    if (!this.investigationArrived) {
+      if (distance <= INVESTIGATION_ARRIVE_RADIUS) {
+        this.investigationArrived = true;
+        this.investigationTravelTimer = 0;
+        this.investigationTimer = NOISE_INVESTIGATE_TIME;
+      } else {
+        if (this.investigationTravelTimer > INVESTIGATION_TRAVEL_TIMEOUT) {
+          this.finishInvestigation();
+          return;
+        }
+        this.steerTowards(
+          this.investigationTarget,
+          stats.maxSpeed * 0.95,
+          dtRatio,
+          UNIT_DETECTION_LERP * 0.8
+        );
+        return;
+      }
     }
 
     this.investigationTimer = Math.max(0, this.investigationTimer - dt);
     if (this.investigationTimer === 0) {
-      this.behavior = 'idle';
+      this.finishInvestigation();
       return;
     }
 
-    const distance = this.pos.distanceTo(this.investigationTarget);
-    if (distance < 6) {
-      this.behavior = 'idle';
-      return;
-    }
-
-    this.steerTowards(this.investigationTarget, stats.maxSpeed * 0.85, dtRatio);
+    this.investigationOrbitAngle += dt * INVESTIGATION_ORBIT_SPEED;
+    const wobble = Math.sin(this.investigationOrbitAngle * 1.7) * 1.2;
+    const radius = Math.max(3, this.investigationOrbitRadius + wobble);
+    const offset = new Vector2(Math.cos(this.investigationOrbitAngle), Math.sin(this.investigationOrbitAngle)).scale(radius);
+    const inspectPoint = this.investigationTarget.clone().add(offset);
+    this.steerTowards(inspectPoint, stats.maxSpeed * 0.7, dtRatio, UNIT_DETECTION_LERP * 0.6);
   }
 
   private beginSearch(game: Game): void {
@@ -446,6 +479,20 @@ export class DarkUnit {
 
   private canTankPersist(distance: number, stats: (typeof UNIT_STATS)[keyof typeof UNIT_STATS]): boolean {
     return this.type === 'tank' && distance <= stats.detectionRadius + TANK_CHASE_PERSIST_DISTANCE;
+  }
+
+  private finishInvestigation(): void {
+    this.behavior = 'idle';
+    this.clearInvestigationState();
+  }
+
+  private clearInvestigationState(): void {
+    this.investigationTimer = 0;
+    this.investigationTarget = null;
+    this.investigationArrived = false;
+    this.investigationTravelTimer = 0;
+    this.investigationOrbitAngle = 0;
+    this.investigationOrbitRadius = 0;
   }
 
   private updateDetectionTint(dtRatio: number): void {
