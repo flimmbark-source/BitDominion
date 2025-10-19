@@ -1,5 +1,4 @@
 import {
-  ARC_COLOR,
   ARC_WIDTH_DEG,
   CASTLE_POS,
   FPS,
@@ -11,7 +10,6 @@ import {
   KNIGHT_SIZE,
   KNIGHT_STOP_DISTANCE,
   MELEE_RANGE,
-  SWING_ARC_POINTS,
   SWING_COOLDOWN,
   SWING_DURATION
 } from '../config/constants';
@@ -114,21 +112,62 @@ export class Knight {
     }
     const radius = MELEE_RANGE;
     const halfWidth = (ARC_WIDTH_DEG * Math.PI) / 360;
-    const startAngle = this.swingAngle - halfWidth;
-    const endAngle = this.swingAngle + halfWidth;
+    const baseAngle = this.swingAngle;
+    const startAngle = baseAngle - halfWidth;
+    const endAngle = baseAngle + halfWidth;
+    const duration = Math.max(0.0001, SWING_DURATION);
+    const rawProgress = 1 - this.swingTimer / duration;
+    const clampedProgress = Math.min(1, Math.max(0, rawProgress));
+    const easedProgress = clampedProgress * clampedProgress * (3 - 2 * clampedProgress);
+    const currentAngle = startAngle + (endAngle - startAngle) * easedProgress;
+    const swooshRadius = radius - 4;
+    const swooshOpacity = 0.25 + 0.55 * (1 - easedProgress);
+    const highlightOpacity = 0.15 + 0.45 * (1 - easedProgress);
 
-    ctx.strokeStyle = ARC_COLOR;
+    ctx.save();
+
+    ctx.strokeStyle = `rgba(20, 200, 120, ${swooshOpacity})`;
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(this.pos.x, this.pos.y);
-    for (let i = 0; i <= SWING_ARC_POINTS; i++) {
-      const t = i / SWING_ARC_POINTS;
-      const angle = startAngle + (endAngle - startAngle) * t;
-      const x = this.pos.x + Math.cos(angle) * radius;
-      const y = this.pos.y + Math.sin(angle) * radius;
-      ctx.lineTo(x, y);
-    }
-    ctx.closePath();
+    ctx.arc(this.pos.x, this.pos.y, swooshRadius, startAngle, currentAngle, false);
     ctx.stroke();
+
+    ctx.strokeStyle = `rgba(220, 220, 220, ${highlightOpacity})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(this.pos.x, this.pos.y, radius - 1, Math.max(startAngle, currentAngle - 0.2), currentAngle, false);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.translate(this.pos.x, this.pos.y);
+    ctx.rotate(currentAngle);
+
+    const guardWidth = 8;
+    const guardHeight = 1.6;
+    const handleLength = 5;
+    const bladeLength = radius - 6;
+    const bladeWidth = 3.4;
+
+    ctx.fillStyle = '#2E2E2E';
+    ctx.fillRect(-handleLength, -1.4, handleLength, 2.8);
+
+    ctx.fillStyle = '#B5B5B5';
+    ctx.fillRect(-guardHeight / 2, -guardWidth / 2, guardHeight, guardWidth);
+
+    ctx.fillStyle = '#F1F1F1';
+    ctx.fillRect(0, -bladeWidth / 2, bladeLength, bladeWidth);
+
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.moveTo(bladeLength, 0);
+    ctx.lineTo(bladeLength - 4, bladeWidth / 2 + 0.4);
+    ctx.lineTo(bladeLength - 4, -(bladeWidth / 2 + 0.4));
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+    ctx.restore();
   }
 
   private collectHits(units: DarkUnit[]): DarkUnit[] {
