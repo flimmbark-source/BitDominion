@@ -25,6 +25,8 @@ export class Knight {
   public swingTimer = 0;
   public swingCooldown = 0;
   public swingAngle: number | null = null;
+  private swingHits = new Set<DarkUnit>();
+  private lastSwingProgress = 0;
   public castleTimer = 0;
 
   setTarget(target: Vector2): void {
@@ -65,6 +67,8 @@ export class Knight {
       if (this.swingTimer === 0) {
         this.swingAngle = null;
         this.swingCooldown = SWING_COOLDOWN;
+        this.lastSwingProgress = 0;
+        this.swingHits.clear();
       }
     }
 
@@ -98,7 +102,9 @@ export class Knight {
 
     this.swingAngle = Math.atan2(nearest.pos.y - this.pos.y, nearest.pos.x - this.pos.x);
     this.swingTimer = SWING_DURATION;
-    return this.collectHits(units);
+    this.swingHits.clear();
+    this.lastSwingProgress = 0;
+    return [];
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
@@ -175,25 +181,35 @@ export class Knight {
       return [];
     }
     const hits: DarkUnit[] = [];
+    const halfWidth = (ARC_WIDTH_DEG * Math.PI) / 360;
+    const duration = Math.max(0.0001, SWING_DURATION);
+    const rawProgress = 1 - this.swingTimer / duration;
+    const clampedProgress = Math.min(1, Math.max(0, rawProgress));
+    const easedProgress = clampedProgress * clampedProgress * (3 - 2 * clampedProgress);
+
     for (const unit of units) {
       if (!unit.alive) continue;
+      if (this.swingHits.has(unit)) continue;
       if (unit.pos.distanceTo(this.pos) > MELEE_RANGE) continue;
-      if (this.pointInArc(unit.pos)) {
-        hits.push(unit);
+      const direction = unit.pos.clone().subtract(this.pos);
+      let unitProgress = 0;
+      if (direction.lengthSq() !== 0) {
+        const angle = Math.atan2(direction.y, direction.x);
+        const diff = angle - this.swingAngle;
+        const normalizedDiff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+        if (Math.abs(normalizedDiff) > halfWidth) {
+          continue;
+        }
+        unitProgress = (normalizedDiff + halfWidth) / (2 * halfWidth);
       }
+      if (unitProgress <= this.lastSwingProgress || unitProgress > easedProgress) {
+        continue;
+      }
+      hits.push(unit);
+      this.swingHits.add(unit);
     }
+    this.lastSwingProgress = Math.max(this.lastSwingProgress, easedProgress);
     return hits;
   }
 
-  private pointInArc(point: Vector2): boolean {
-    const direction = point.clone().subtract(this.pos);
-    if (direction.lengthSq() === 0) {
-      return true;
-    }
-    const angle = Math.atan2(direction.y, direction.x);
-    const baseAngle = this.swingAngle ?? 0;
-    let diff = angle - baseAngle;
-    diff = Math.abs(((diff + Math.PI) % (Math.PI * 2)) - Math.PI);
-    return diff <= (ARC_WIDTH_DEG * Math.PI) / 360;
-  }
 }
