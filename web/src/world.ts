@@ -322,46 +322,178 @@ export class World {
   }
 
   private buildForests(rand: () => number): void {
-    const columns = 9;
-    const rows = 9;
-    const cellWidth = (WIDTH - ARENA_PADDING * 2) / columns;
-    const cellHeight = (HEIGHT - ARENA_PADDING * 2) / rows;
-    const treePadding = 6;
     const castleClearRadius = CASTLE_WIN_RADIUS + 35;
+    const baseTreePadding = 6;
 
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < columns; col++) {
-        const cellCenterX = ARENA_PADDING + cellWidth * (col + 0.5);
-        const cellCenterY = ARENA_PADDING + cellHeight * (row + 0.5);
-        const densityRoll = rand();
-        let treeCount = 0;
-        if (densityRoll > 0.25) {
-          treeCount = 1;
-          if (densityRoll > 0.65) {
-            treeCount++;
-          }
-          if (densityRoll > 0.92) {
-            treeCount++;
+    const randomInRange = (min: number, max: number): number => min + rand() * (max - min);
+
+    interface ClusterConfig {
+      count: number;
+      radiusRange: [number, number];
+      treeRange: [number, number];
+      treeRadiusRange: [number, number];
+      padding: number;
+      jitter: number;
+      falloff: number;
+    }
+
+    const clusterConfigs: ClusterConfig[] = [
+      {
+        count: 4,
+        radiusRange: [70, 110],
+        treeRange: [20, 28],
+        treeRadiusRange: [11, 17],
+        padding: 2,
+        jitter: 14,
+        falloff: 2.2
+      },
+      {
+        count: 5,
+        radiusRange: [110, 160],
+        treeRange: [8, 14],
+        treeRadiusRange: [13, 21],
+        padding: 8,
+        jitter: 26,
+        falloff: 0.85
+      }
+    ];
+
+    interface ClusterDescriptor {
+      center: Vector2;
+      radius: number;
+      treeCount: number;
+      treeRadiusRange: [number, number];
+      padding: number;
+      jitter: number;
+      falloff: number;
+    }
+
+    const clusters: ClusterDescriptor[] = [];
+
+    const isCenterValid = (center: Vector2, radius: number): boolean => {
+      if (center.distanceTo(CASTLE_POS) < castleClearRadius + radius) {
+        return false;
+      }
+
+      for (const village of this.villages) {
+        const minVillageDistance = village.canopyRadius + radius + 25;
+        if (center.distanceTo(village.center) < minVillageDistance) {
+          return false;
+        }
+      }
+
+      for (const hut of this.huts) {
+        const halfW = hut.width / 2 + radius;
+        const halfH = hut.height / 2 + radius;
+        if (Math.abs(center.x - hut.center.x) <= halfW && Math.abs(center.y - hut.center.y) <= halfH) {
+          return false;
+        }
+      }
+
+      return true;
+    };
+
+    for (const config of clusterConfigs) {
+      let placedClusters = 0;
+      let attempts = 0;
+      const maxAttempts = config.count * 20;
+
+      while (placedClusters < config.count && attempts < maxAttempts) {
+        attempts++;
+        const radius = randomInRange(config.radiusRange[0], config.radiusRange[1]);
+        const horizontalSpace = WIDTH - (ARENA_PADDING + radius) * 2;
+        const verticalSpace = HEIGHT - (ARENA_PADDING + radius) * 2;
+
+        if (horizontalSpace <= 0 || verticalSpace <= 0) {
+          break;
+        }
+
+        const center = new Vector2(
+          ARENA_PADDING + radius + rand() * horizontalSpace,
+          ARENA_PADDING + radius + rand() * verticalSpace
+        );
+
+        if (!isCenterValid(center, radius)) {
+          continue;
+        }
+
+        let overlaps = false;
+        for (const existing of clusters) {
+          const requiredDistance = (radius + existing.radius) * 0.6;
+          if (center.distanceTo(existing.center) < requiredDistance) {
+            overlaps = true;
+            break;
           }
         }
 
-    for (let i = 0; i < patchCenters.length; i++) {
-      const center = patchCenters[i].clone();
-      const radius = 60 + i * 10;
-      const baseTreeCount = 12 + i * 4;
-      const treeCount = baseTreeCount + Math.floor(rand() * 5);
-      for (let t = 0; t < treeCount; t++) {
+        if (overlaps) {
+          continue;
+        }
+
+        clusters.push({
+          center,
+          radius,
+          treeCount: Math.round(randomInRange(config.treeRange[0], config.treeRange[1])),
+          treeRadiusRange: config.treeRadiusRange,
+          padding: config.padding,
+          jitter: config.jitter,
+          falloff: config.falloff
+        });
+        placedClusters++;
+      }
+    }
+
+    const placeClusterTrees = (cluster: ClusterDescriptor): void => {
+      let placedTrees = 0;
+      let attempts = 0;
+      const maxAttempts = cluster.treeCount * 12;
+
+      while (placedTrees < cluster.treeCount && attempts < maxAttempts) {
+        attempts++;
         const angle = rand() * Math.PI * 2;
-        const distance = Math.sqrt(rand()) * radius;
+        const distance = Math.pow(rand(), cluster.falloff) * cluster.radius;
         const offset = new Vector2(Math.cos(angle), Math.sin(angle)).scale(distance);
-        offset.x += (rand() - 0.5) * 18;
-        offset.y += (rand() - 0.5) * 18;
-        const position = center.clone().add(offset);
+        offset.x += (rand() - 0.5) * cluster.jitter;
+        offset.y += (rand() - 0.5) * cluster.jitter;
+
+        const position = cluster.center.clone().add(offset);
         position.x = clamp(position.x, ARENA_PADDING, WIDTH - ARENA_PADDING);
         position.y = clamp(position.y, ARENA_PADDING, HEIGHT - ARENA_PADDING);
-        const treeRadius = 12 + rand() * 8;
+
+        const treeRadius = randomInRange(cluster.treeRadiusRange[0], cluster.treeRadiusRange[1]);
+
+        if (!this.canPlaceTree(position, treeRadius, cluster.padding, castleClearRadius)) {
+          continue;
+        }
+
         this.trees.push({ position: position.clone(), radius: treeRadius });
+        placedTrees++;
       }
+    };
+
+    for (const cluster of clusters) {
+      placeClusterTrees(cluster);
+    }
+
+    const scatterCount = 40;
+    let scattered = 0;
+    let scatterAttempts = 0;
+    const scatterMaxAttempts = scatterCount * 15;
+
+    while (scattered < scatterCount && scatterAttempts < scatterMaxAttempts) {
+      scatterAttempts++;
+      const position = new Vector2(
+        ARENA_PADDING + rand() * (WIDTH - ARENA_PADDING * 2),
+        ARENA_PADDING + rand() * (HEIGHT - ARENA_PADDING * 2)
+      );
+      const treeRadius = randomInRange(12, 20);
+
+      if (!this.canPlaceTree(position, treeRadius, baseTreePadding + 2, castleClearRadius)) {
+        continue;
+      }
+
+      this.trees.push({ position: position.clone(), radius: treeRadius });
+      scattered++;
     }
   }
 
