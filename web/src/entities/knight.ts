@@ -6,6 +6,7 @@ import {
   KNIGHT_ACCEL,
   KNIGHT_COLOR,
   KNIGHT_FRICTION,
+  KNIGHT_SPEED,
   KNIGHT_HP,
   KNIGHT_SIZE,
   KNIGHT_STOP_DISTANCE,
@@ -37,17 +38,23 @@ export class Knight {
     const toTarget = this.target.clone().subtract(this.pos);
     const distance = toTarget.length();
 
+    this.velocity.scale(Math.pow(KNIGHT_FRICTION, dtRatio));
+    const steeringStrength = Math.min(1, KNIGHT_ACCEL * dtRatio);
+
     if (distance > KNIGHT_STOP_DISTANCE) {
-      const desiredDir = toTarget.normalize();
-      this.velocity.add(desiredDir.scale(KNIGHT_ACCEL * dtRatio));
-    } else if (this.velocity.lengthSq() < 0.05) {
-      this.velocity.set(0, 0);
+      const desiredVelocity = toTarget.normalize().scale(KNIGHT_SPEED);
+      this.velocity.lerp(desiredVelocity, steeringStrength);
+    } else {
+      this.velocity.lerp(new Vector2(), steeringStrength);
+      if (this.velocity.lengthSq() < 0.01) {
+        this.velocity.set(0, 0);
+      }
     }
 
-    this.velocity.scale(Math.pow(KNIGHT_FRICTION, dtRatio));
     world.applyTerrainSteering(this, KNIGHT_SIZE / 2, dt);
+    this.velocity.limit(KNIGHT_SPEED);
 
-    if (distance <= KNIGHT_STOP_DISTANCE && this.velocity.lengthSq() < 0.05) {
+    if (distance <= KNIGHT_STOP_DISTANCE && this.velocity.lengthSq() < 0.01) {
       this.velocity.set(0, 0);
     }
 
