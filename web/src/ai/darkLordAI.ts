@@ -102,8 +102,15 @@ export class DarkLordAI {
   }
 
   private spawnCoverageScout(game: Game): void {
-    const anchor = game.getNextAnchor();
+    const anchor = this.chooseCoverageAnchor(game);
     this.spawnUnit(game, 'scout', this.jitter(anchor, 14));
+    if (game.getActiveWatchtowerCount() >= 2 && this.canAfford('priest') && Math.random() < 0.6) {
+      this.spawnUnit(game, 'priest', this.jitter(anchor, 16));
+      return;
+    }
+    if (this.canAfford('scout') && Math.random() < 0.35) {
+      this.spawnUnit(game, 'scout', this.jitter(anchor, 18));
+    }
   }
 
   private spawnAlarmScout(game: Game): boolean {
@@ -141,5 +148,22 @@ export class DarkLordAI {
     const angle = Math.random() * Math.PI * 2;
     const distance = Math.random() * radius;
     return position.clone().add(new Vector2(Math.cos(angle) * distance, Math.sin(angle) * distance));
+  }
+
+  private chooseCoverageAnchor(game: Game): Vector2 {
+    const beacons = game.getActiveBeacons();
+    if (beacons.length) {
+      let closest = beacons[0];
+      let closestDist = closest.position.distanceTo(CASTLE_POS);
+      for (let i = 1; i < beacons.length; i++) {
+        const distance = beacons[i].position.distanceTo(CASTLE_POS);
+        if (distance < closestDist) {
+          closest = beacons[i];
+          closestDist = distance;
+        }
+      }
+      return game.getNearestAnchorTo(closest.position);
+    }
+    return game.getNextAnchor();
   }
 }

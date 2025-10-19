@@ -12,19 +12,26 @@ import {
   SEARCH_DURATION,
   SEARCH_RADIUS_GROWTH,
   SEARCH_SPIN_SPEED,
+  BUILDING_ATTACK_INTERVAL,
+  BUILDING_ATTACK_NOISE,
   TANK_CHASE_PERSIST_DISTANCE,
   TANK_KNOCKBACK_STRENGTH,
   UNIT_COLORS,
   UNIT_DETECTION_LERP,
   UNIT_STATS,
   UNIT_WANDER_INTERVAL,
-  UnitType
+  UnitType,
+  ENEMY_BUILDING_TARGET_RANGE,
+  ENEMY_BUILDING_TARGET_CHANCE,
+  ENEMY_BUILDING_FOCUS_TIME
 } from '../config/constants';
 import { Vector2 } from '../math/vector2';
 import { mixColors } from '../utils/color';
 import type { Game } from '../game';
 import type { World } from '../world';
 import type { Knight } from './knight';
+import { getBuildingHalfSize } from './building';
+import type { BuildingInstance } from './building';
 
 const INVESTIGATION_ARRIVE_RADIUS = 6;
 const INVESTIGATION_TRAVEL_TIMEOUT = NOISE_INVESTIGATE_TIME * 3;
@@ -60,6 +67,12 @@ export class DarkUnit {
   private priestProximityTimer = 0;
   private priestRevealTimer = 0;
   private roadAssistTimer = 0;
+  private buildingTargetId: number | null = null;
+  private buildingFocusTimer = 0;
+  private buildingRetargetCooldown = 0;
+  private buildingAttackTimer = 0;
+  private slowTimer = 0;
+  private speedMultiplier = 1;
 
   constructor(public pos: Vector2, public readonly type: UnitType) {
     this.hp = UNIT_STATS[type].maxHp;
@@ -73,6 +86,18 @@ export class DarkUnit {
 
     const dtRatio = dt * FPS;
     const stats = UNIT_STATS[this.type];
+
+    if (this.slowTimer > 0) {
+      this.slowTimer = Math.max(0, this.slowTimer - dt);
+      if (this.slowTimer === 0) {
+        this.speedMultiplier = 1;
+      }
+    }
+    if (this.buildingRetargetCooldown > 0) {
+      this.buildingRetargetCooldown = Math.max(0, this.buildingRetargetCooldown - dt);
+    }
+
+    this.updateBuildingFocus(dt, game, world);
     const toKnight = knight.pos.clone().subtract(this.pos);
     const distance = toKnight.length();
     const previouslyDetecting = this.detecting;
@@ -123,7 +148,13 @@ export class DarkUnit {
         if (world.isPointOnRoad(this.pos)) {
           this.roadAssistTimer = Math.max(this.roadAssistTimer, 2);
         }
-        this.steerTowards(knight.pos, stats.maxSpeed, dtRatio, UNIT_DETECTION_LERP, this.roadAssistTimer > 0);
+        this.steerTowards(
+          this.getChaseTarget(knight, game),
+          stats.maxSpeed * this.speedMultiplier,
+          dtRatio,
+          UNIT_DETECTION_LERP,
+          this.roadAssistTimer > 0
+        );
         break;
       case 'searching':
         if (world.isPointOnRoad(this.pos)) {
@@ -139,9 +170,9 @@ export class DarkUnit {
         break;
     }
 
-    world.applyTerrainSteering(this, this.getHalfSize(), dt);
+    world.applyTerrainSteering(this, this.getHalfSize(), dt, { entityType: 'monster' });
     this.pos.add(this.velocity.clone().scale(dtRatio));
-    world.resolveStaticCollisions(this.pos, this.getHalfSize());
+    world.resolveStaticCollisions(this.pos, this.getHalfSize(), { entityType: 'monster' });
     world.constrainToArena(this, this.getHalfSize(), { bounce: true });
 
     if (this.attackCooldownTimer > 0) {
@@ -190,7 +221,7 @@ export class DarkUnit {
     return !this.alive;
   }
 
-  tryAttack(knight: Knight, world: World): void {
+  tryAttack(knight: Knight, world: World, game: Game, dt: number): void {
     if (!this.alive || this.attackCooldownTimer > 0) {
       return;
     }
@@ -198,6 +229,33 @@ export class DarkUnit {
     const stats = UNIT_STATS[this.type];
     const isRanged = stats.attackType === 'ranged';
     const attackRange = stats.attackRange;
+
+    const buildingTarget =
+      this.buildingTargetId != null ? game.getBuildingById(this.buildingTargetId) : null;
+    if (buildingTarget && buildingTarget.state === 'active') {
+      const { halfWidth, halfHeight } = getBuildingHalfSize(buildingTarget.type);
+      const distance = this.pos.distanceTo(buildingTarget.position);
+      const buildingRadius = Math.max(halfWidth, halfHeight);
+      const effectiveRange = attackRange + buildingRadius;
+      if (distance <= effectiveRange && (!isRanged || world.hasLineOfSight(this.pos, buildingTarget.position))) {
+        this.buildingAttackTimer += dt;
+        while (this.buildingAttackTimer >= BUILDING_ATTACK_INTERVAL) {
+          this.buildingAttackTimer -= BUILDING_ATTACK_INTERVAL;
+          const damage = this.type === 'tank' ? 2 : 1;
+          game.damageBuilding(buildingTarget.id, damage);
+          game.emitNoise(buildingTarget.position, BUILDING_ATTACK_NOISE);
+          this.attackVisualTimer = stats.attackVisualDuration;
+          this.attackVisualDuration = stats.attackVisualDuration;
+          this.lastAttackTarget = buildingTarget.position.clone();
+          this.lastAttackOrigin = this.pos.clone();
+        }
+      } else {
+        this.buildingAttackTimer = 0;
+      }
+      return;
+    }
+
+    this.buildingAttackTimer = 0;
 
     let target: 'knight' | 'villager' | null = null;
     let targetPos: Vector2 | null = null;
@@ -347,7 +405,8 @@ export class DarkUnit {
   private pickNewDirection(): void {
     const stats = UNIT_STATS[this.type];
     const angle = Math.random() * Math.PI * 2;
-    const speed = stats.minSpeed + Math.random() * (stats.maxSpeed - stats.minSpeed);
+    const speed =
+      (stats.minSpeed + Math.random() * (stats.maxSpeed - stats.minSpeed)) * this.speedMultiplier;
     this.velocity.set(Math.cos(angle) * speed, Math.sin(angle) * speed);
     this.wanderTimer = UNIT_WANDER_INTERVAL[0] + Math.random() * (UNIT_WANDER_INTERVAL[1] - UNIT_WANDER_INTERVAL[0]);
   }
@@ -380,7 +439,8 @@ export class DarkUnit {
       if (distance <= PATROL_ANCHOR_RADIUS || anchor.suspicion >= suspicionThreshold) {
         followingAnchor = true;
         const boost = 1 + Math.min(0.6, anchor.suspicion / PRIEST_REVEAL_SUSPICION);
-        const speed = Math.min(stats.maxSpeed, Math.max(stats.minSpeed, stats.minSpeed * boost));
+        const speed =
+          Math.min(stats.maxSpeed, Math.max(stats.minSpeed, stats.minSpeed * boost)) * this.speedMultiplier;
         const lerpScale = this.type === 'tank' ? UNIT_DETECTION_LERP * 0.4 : UNIT_DETECTION_LERP * 0.5;
         this.steerTowards(anchor.position, speed, dtRatio, lerpScale);
       }
@@ -416,7 +476,13 @@ export class DarkUnit {
     if (onRoad) {
       this.roadAssistTimer = Math.max(this.roadAssistTimer, 2);
     }
-    this.steerTowards(target, stats.maxSpeed * 0.9, dtRatio, UNIT_DETECTION_LERP * 0.6, onRoad || this.roadAssistTimer > 0);
+    this.steerTowards(
+      target,
+      stats.maxSpeed * 0.9 * this.speedMultiplier,
+      dtRatio,
+      UNIT_DETECTION_LERP * 0.6,
+      onRoad || this.roadAssistTimer > 0
+    );
 
     if (Math.random() < dt * 0.6) {
       game.registerKnightSighting(target);
@@ -444,7 +510,7 @@ export class DarkUnit {
         }
         this.steerTowards(
           this.investigationTarget,
-          stats.maxSpeed * 0.95,
+          stats.maxSpeed * 0.95 * this.speedMultiplier,
           dtRatio,
           UNIT_DETECTION_LERP * 0.8
         );
@@ -463,7 +529,12 @@ export class DarkUnit {
     const radius = Math.max(3, this.investigationOrbitRadius + wobble);
     const offset = new Vector2(Math.cos(this.investigationOrbitAngle), Math.sin(this.investigationOrbitAngle)).scale(radius);
     const inspectPoint = this.investigationTarget.clone().add(offset);
-    this.steerTowards(inspectPoint, stats.maxSpeed * 0.7, dtRatio, UNIT_DETECTION_LERP * 0.6);
+    this.steerTowards(
+      inspectPoint,
+      stats.maxSpeed * 0.7 * this.speedMultiplier,
+      dtRatio,
+      UNIT_DETECTION_LERP * 0.6
+    );
   }
 
   private beginSearch(game: Game): void {
@@ -493,6 +564,81 @@ export class DarkUnit {
     this.investigationTravelTimer = 0;
     this.investigationOrbitAngle = 0;
     this.investigationOrbitRadius = 0;
+  }
+
+  private updateBuildingFocus(dt: number, game: Game, world: World): void {
+    let current = this.buildingTargetId != null ? game.getBuildingById(this.buildingTargetId) : null;
+    if (this.buildingTargetId != null && !current) {
+      this.clearBuildingTarget();
+    }
+    if (current) {
+      const distance = current.position.distanceTo(this.pos);
+      const hasLos = world.hasLineOfSight(this.pos, current.position);
+      this.buildingFocusTimer = Math.max(0, this.buildingFocusTimer - dt);
+      if (
+        this.buildingFocusTimer <= 0 ||
+        !hasLos ||
+        distance > ENEMY_BUILDING_TARGET_RANGE + 32 ||
+        current.state !== 'active' ||
+        current.hp <= 0
+      ) {
+        this.clearBuildingTarget();
+        current = null;
+      }
+    }
+
+    if (!current && this.buildingRetargetCooldown <= 0) {
+      let candidate: BuildingInstance | null = null;
+      let nearestDist = ENEMY_BUILDING_TARGET_RANGE + 1;
+      for (const building of game.getBuildings()) {
+        if (building.state !== 'active') {
+          continue;
+        }
+        if (building.type !== 'watchtower' && building.type !== 'beacon') {
+          continue;
+        }
+        const distance = building.position.distanceTo(this.pos);
+        if (distance > ENEMY_BUILDING_TARGET_RANGE || distance >= nearestDist) {
+          continue;
+        }
+        if (!world.hasLineOfSight(this.pos, building.position)) {
+          continue;
+        }
+        nearestDist = distance;
+        candidate = building;
+      }
+      this.buildingRetargetCooldown = 1;
+      if (candidate && Math.random() < ENEMY_BUILDING_TARGET_CHANCE) {
+        this.buildingTargetId = candidate.id;
+        this.buildingFocusTimer = ENEMY_BUILDING_FOCUS_TIME;
+      }
+    }
+  }
+
+  private getChaseTarget(knight: Knight, game: Game): Vector2 {
+    if (this.buildingTargetId != null) {
+      const building = game.getBuildingById(this.buildingTargetId);
+      if (building && building.state === 'active' && building.hp > 0) {
+        return building.position.clone();
+      }
+    }
+    return knight.pos.clone();
+  }
+
+  private clearBuildingTarget(): void {
+    this.buildingTargetId = null;
+    this.buildingFocusTimer = 0;
+    this.buildingAttackTimer = 0;
+  }
+
+  getCollisionRadius(): number {
+    return this.getHalfSize();
+  }
+
+  applySlow(factor: number, duration: number): void {
+    const clamped = Math.min(1, Math.max(0, factor));
+    this.speedMultiplier = Math.min(this.speedMultiplier, clamped);
+    this.slowTimer = Math.max(this.slowTimer, duration);
   }
 
   private updateDetectionTint(dtRatio: number): void {

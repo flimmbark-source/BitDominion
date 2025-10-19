@@ -51,7 +51,7 @@ export class Knight {
       }
     }
 
-    world.applyTerrainSteering(this, KNIGHT_SIZE / 2, dt);
+    world.applyTerrainSteering(this, KNIGHT_SIZE / 2, dt, { entityType: 'knight' });
     this.velocity.limit(KNIGHT_SPEED);
 
     if (distance <= KNIGHT_STOP_DISTANCE && this.velocity.lengthSq() < 0.01) {
@@ -59,7 +59,7 @@ export class Knight {
     }
 
     this.pos.add(this.velocity.clone().scale(dtRatio));
-    world.resolveStaticCollisions(this.pos, KNIGHT_SIZE / 2);
+    world.resolveStaticCollisions(this.pos, KNIGHT_SIZE / 2, { entityType: 'knight' });
     world.constrainToArena(this, KNIGHT_SIZE / 2);
 
     if (this.swingTimer > 0) {
