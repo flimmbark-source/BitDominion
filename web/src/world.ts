@@ -334,18 +334,58 @@ export class World {
     const treePadding = 6;
     const castleClearRadius = CASTLE_WIN_RADIUS + 35;
 
+    const denseZones = Array.from({ length: 5 }, () => ({
+      center: new Vector2(
+        ARENA_PADDING + rand() * (WIDTH - ARENA_PADDING * 2),
+        ARENA_PADDING + rand() * (HEIGHT - ARENA_PADDING * 2)
+      ),
+      radius: 120 + rand() * 80,
+      strength: 0.55 + rand() * 0.35
+    }));
+
+    const sparseZones = Array.from({ length: 3 }, () => ({
+      center: new Vector2(
+        ARENA_PADDING + rand() * (WIDTH - ARENA_PADDING * 2),
+        ARENA_PADDING + rand() * (HEIGHT - ARENA_PADDING * 2)
+      ),
+      radius: 140 + rand() * 90,
+      strength: 0.45 + rand() * 0.25
+    }));
+
+    const computeZoneInfluence = (point: Vector2, zones: typeof denseZones, invert = false): number => {
+      let influence = 0;
+      for (const zone of zones) {
+        const distance = point.distanceTo(zone.center);
+        if (distance >= zone.radius) {
+          continue;
+        }
+        const falloff = 1 - distance / zone.radius;
+        influence += falloff * zone.strength * (invert ? -1 : 1);
+      }
+      return influence;
+    };
+
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < columns; col++) {
         const cellCenterX = ARENA_PADDING + cellWidth * (col + 0.5);
         const cellCenterY = ARENA_PADDING + cellHeight * (row + 0.5);
-        const densityRoll = rand();
+        const cellCenter = new Vector2(cellCenterX, cellCenterY);
+
+        let densityScore = rand() * 0.18;
+        densityScore += computeZoneInfluence(cellCenter, denseZones);
+        densityScore += computeZoneInfluence(cellCenter, sparseZones, true);
+        densityScore = clamp(densityScore, 0, 1);
+
         let treeCount = 0;
-        if (densityRoll > 0.25) {
+        if (densityScore > 0.1) {
           treeCount = 1;
-          if (densityRoll > 0.65) {
+          if (densityScore > 0.35) {
             treeCount++;
           }
-          if (densityRoll > 0.92) {
+          if (densityScore > 0.6) {
+            treeCount++;
+          }
+          if (densityScore > 0.82) {
             treeCount++;
           }
         }
@@ -354,17 +394,18 @@ export class World {
           continue;
         }
 
-        const cellCenter = new Vector2(cellCenterX, cellCenterY);
+        const localPadding = treePadding * (1.15 - densityScore * 0.5);
+
         for (let i = 0; i < treeCount; i++) {
-          let attempts = 12;
+          let attempts = 14;
           while (attempts-- > 0) {
-            const offset = new Vector2((rand() - 0.5) * cellWidth * 0.9, (rand() - 0.5) * cellHeight * 0.9);
+            const offset = new Vector2((rand() - 0.5) * cellWidth * 0.95, (rand() - 0.5) * cellHeight * 0.95);
             const position = cellCenter.clone().add(offset);
             position.x = clamp(position.x, ARENA_PADDING, WIDTH - ARENA_PADDING);
             position.y = clamp(position.y, ARENA_PADDING, HEIGHT - ARENA_PADDING);
             const treeRadius = 12 + rand() * 8;
 
-            if (this.canPlaceTree(position, treeRadius, treePadding, castleClearRadius)) {
+            if (this.canPlaceTree(position, treeRadius, Math.max(2, localPadding), castleClearRadius)) {
               this.trees.push({ position, radius: treeRadius });
               break;
             }
