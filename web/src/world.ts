@@ -24,7 +24,8 @@ import {
   VILLAGER_HP,
   VILLAGER_IDLE_RADIUS,
   VILLAGER_SPEED,
-  WIDTH
+  WIDTH,
+  BuildingType
 } from './config/constants';
 import { Vector2 } from './math/vector2';
 
@@ -78,6 +79,17 @@ interface LosSegment {
   ttl: number;
 }
 
+interface BuildingObstacle {
+  center: Vector2;
+  halfWidth: number;
+  halfHeight: number;
+  steerStrength: number;
+  solid: boolean;
+  blocksKnight: boolean;
+  blocksVision: boolean;
+  type: BuildingType;
+}
+
 export interface TerrainEntity {
   pos: Vector2;
   velocity: Vector2;
@@ -87,6 +99,7 @@ export interface WorldUpdateContext {
   knight: Knight;
   monsters: readonly DarkUnit[];
   emitNoise: (position: Vector2, strength: number) => void;
+  onChestOpened: (position: Vector2) => void;
 }
 
 const VILLAGER_ALERT_DURATION = 1.8;
@@ -113,6 +126,7 @@ export class World {
   private readonly huts: Hut[] = [];
   private readonly losSegments: LosSegment[] = [];
   private canopyEnabled = true;
+  private buildingObstacles: BuildingObstacle[] = [];
 
   constructor() {
     const rand = mulberry32(0x5123abcd);
@@ -129,6 +143,10 @@ export class World {
         this.losSegments.splice(i, 1);
       }
     }
+  }
+
+  setBuildingObstacles(obstacles: BuildingObstacle[]): void {
+    this.buildingObstacles = obstacles;
   }
 
   update(dt: number, context: WorldUpdateContext): void {
@@ -157,7 +175,21 @@ export class World {
     return null;
   }
 
-  applyTerrainSteering(entity: TerrainEntity, radius: number, dt: number): void {
+  getTrees(): readonly Tree[] {
+    return this.trees;
+  }
+
+  getHuts(): readonly Hut[] {
+    return this.huts;
+  }
+
+  applyTerrainSteering(
+    entity: TerrainEntity,
+    radius: number,
+    dt: number,
+    options?: { entityType?: 'knight' | 'monster' | 'villager' }
+  ): void {
+    const entityType = options?.entityType ?? 'monster';
     const steer = new Vector2();
     for (const tree of this.trees) {
       const push = this.computeTreePush(entity.pos, tree, radius);
@@ -171,13 +203,37 @@ export class World {
         steer.add(push);
       }
     }
+    for (const obstacle of this.buildingObstacles) {
+      if (!obstacle.solid) {
+        continue;
+      }
+      if (entityType === 'knight' && !obstacle.blocksKnight) {
+        continue;
+      }
+      const push = this.computeRectPush(
+        entity.pos,
+        obstacle.center,
+        obstacle.halfWidth,
+        obstacle.halfHeight,
+        radius,
+        obstacle.steerStrength
+      );
+      if (push) {
+        steer.add(push);
+      }
+    }
     if (steer.lengthSq() > 0) {
       const force = Math.min(1.2, dt * 60) * 0.6;
       entity.velocity.add(steer.scale(force));
     }
   }
 
-  resolveStaticCollisions(position: Vector2, radius: number): void {
+  resolveStaticCollisions(
+    position: Vector2,
+    radius: number,
+    options?: { entityType?: 'knight' | 'monster' | 'villager' }
+  ): void {
+    const entityType = options?.entityType ?? 'monster';
     for (const tree of this.trees) {
       const minDistance = tree.radius + radius;
       const toEntity = position.clone().subtract(tree.position);
@@ -197,6 +253,24 @@ export class World {
 
     for (const hut of this.huts) {
       const correction = this.computeHutCorrection(position, hut, radius);
+      if (correction) {
+        position.add(correction);
+      }
+    }
+    for (const obstacle of this.buildingObstacles) {
+      if (!obstacle.solid) {
+        continue;
+      }
+      if (entityType === 'knight' && !obstacle.blocksKnight) {
+        continue;
+      }
+      const correction = this.computeRectCorrection(
+        position,
+        obstacle.center,
+        obstacle.halfWidth,
+        obstacle.halfHeight,
+        radius
+      );
       if (correction) {
         position.add(correction);
       }
@@ -266,6 +340,10 @@ export class World {
     return !blocked;
   }
 
+  raycastObstacles(origin: Vector2, direction: Vector2, maxDistance: number): number {
+    return this.castVisionRay(origin, direction, maxDistance);
+  }
+
   computeVisibilityPolygon(origin: Vector2, radius: number): Vector2[] {
     if (radius <= 0) {
       return [];
@@ -295,14 +373,12 @@ export class World {
       addAngle(angle + epsilon);
     }
 
-    for (const hut of this.huts) {
-      const halfW = hut.width / 2;
-      const halfH = hut.height / 2;
+    const addRectAngles = (center: Vector2, halfW: number, halfH: number) => {
       const corners = [
-        { x: hut.center.x - halfW, y: hut.center.y - halfH },
-        { x: hut.center.x + halfW, y: hut.center.y - halfH },
-        { x: hut.center.x + halfW, y: hut.center.y + halfH },
-        { x: hut.center.x - halfW, y: hut.center.y + halfH }
+        { x: center.x - halfW, y: center.y - halfH },
+        { x: center.x + halfW, y: center.y - halfH },
+        { x: center.x + halfW, y: center.y + halfH },
+        { x: center.x - halfW, y: center.y + halfH }
       ];
       for (const corner of corners) {
         const angle = Math.atan2(corner.y - origin.y, corner.x - origin.x);
@@ -310,6 +386,17 @@ export class World {
         addAngle(angle - epsilon);
         addAngle(angle + epsilon);
       }
+    };
+
+    for (const hut of this.huts) {
+      addRectAngles(hut.center, hut.width / 2, hut.height / 2);
+    }
+
+    for (const obstacle of this.buildingObstacles) {
+      if (!obstacle.solid) {
+        continue;
+      }
+      addRectAngles(obstacle.center, obstacle.halfWidth, obstacle.halfHeight);
     }
 
     rawAngles.sort((a, b) => a - b);
@@ -358,6 +445,16 @@ export class World {
       }
     }
 
+    for (const obstacle of this.buildingObstacles) {
+      if (!obstacle.blocksVision) {
+        continue;
+      }
+      const distance = this.rayRectDistanceGeneric(origin, direction, obstacle);
+      if (distance != null && distance >= 0 && distance < closest) {
+        closest = distance;
+      }
+    }
+
     return closest;
   }
 
@@ -396,6 +493,14 @@ export class World {
     const maxX = hut.center.x + halfW;
     const minY = hut.center.y - halfH;
     const maxY = hut.center.y + halfH;
+    return this.rayAabbDistance(origin, direction, minX, minY, maxX, maxY);
+  }
+
+  private rayRectDistanceGeneric(origin: Vector2, direction: Vector2, obstacle: BuildingObstacle): number | null {
+    const minX = obstacle.center.x - obstacle.halfWidth;
+    const maxX = obstacle.center.x + obstacle.halfWidth;
+    const minY = obstacle.center.y - obstacle.halfHeight;
+    const maxY = obstacle.center.y + obstacle.halfHeight;
     return this.rayAabbDistance(origin, direction, minX, minY, maxX, maxY);
   }
 
@@ -782,6 +887,7 @@ export class World {
         if (!chest.opened && chest.position.distanceTo(knightPos) <= CHEST_OPEN_RADIUS) {
           chest.opened = true;
           context.emitNoise(chest.position, NOISE_CHEST_STRENGTH);
+          context.onChestOpened(chest.position);
         }
       }
     }
@@ -829,7 +935,7 @@ export class World {
       offset.normalize().scale(VILLAGE_RADIUS - 6);
       villager.pos.copy(village.center.clone().add(offset));
     }
-    this.resolveStaticCollisions(villager.pos, 3);
+    this.resolveStaticCollisions(villager.pos, 3, { entityType: 'villager' });
   }
 
   private updateIdleVillager(villager: Villager, dt: number, speed: number): void {
@@ -870,33 +976,54 @@ export class World {
   }
 
   private computeHutPush(position: Vector2, hut: Hut, radius: number): Vector2 | null {
-    const halfW = hut.width / 2 + radius;
-    const halfH = hut.height / 2 + radius;
-    const dx = position.x - hut.center.x;
-    const dy = position.y - hut.center.y;
-    if (Math.abs(dx) > halfW || Math.abs(dy) > halfH) {
-      return null;
-    }
-    const overlapX = halfW - Math.abs(dx);
-    const overlapY = halfH - Math.abs(dy);
-    if (overlapX < overlapY) {
-      const dir = dx >= 0 ? 1 : -1;
-      return new Vector2(dir * (overlapX / radius) * HUT_STEER_STRENGTH, 0);
-    }
-    const dir = dy >= 0 ? 1 : -1;
-    return new Vector2(0, dir * (overlapY / radius) * HUT_STEER_STRENGTH);
+    return this.computeRectPush(position, hut.center, hut.width / 2, hut.height / 2, radius, HUT_STEER_STRENGTH);
   }
 
   private computeHutCorrection(position: Vector2, hut: Hut, radius: number): Vector2 | null {
-    const halfW = hut.width / 2 + radius;
-    const halfH = hut.height / 2 + radius;
-    const dx = position.x - hut.center.x;
-    const dy = position.y - hut.center.y;
-    if (Math.abs(dx) > halfW || Math.abs(dy) > halfH) {
+    return this.computeRectCorrection(position, hut.center, hut.width / 2, hut.height / 2, radius);
+  }
+
+  private computeRectPush(
+    position: Vector2,
+    center: Vector2,
+    halfW: number,
+    halfH: number,
+    radius: number,
+    strength: number
+  ): Vector2 | null {
+    const expandedHalfW = halfW + radius;
+    const expandedHalfH = halfH + radius;
+    const dx = position.x - center.x;
+    const dy = position.y - center.y;
+    if (Math.abs(dx) > expandedHalfW || Math.abs(dy) > expandedHalfH) {
       return null;
     }
-    const overlapX = halfW - Math.abs(dx);
-    const overlapY = halfH - Math.abs(dy);
+    const overlapX = expandedHalfW - Math.abs(dx);
+    const overlapY = expandedHalfH - Math.abs(dy);
+    if (overlapX < overlapY) {
+      const dir = dx >= 0 ? 1 : -1;
+      return new Vector2(dir * (overlapX / Math.max(1, radius)) * strength, 0);
+    }
+    const dir = dy >= 0 ? 1 : -1;
+    return new Vector2(0, dir * (overlapY / Math.max(1, radius)) * strength);
+  }
+
+  private computeRectCorrection(
+    position: Vector2,
+    center: Vector2,
+    halfW: number,
+    halfH: number,
+    radius: number
+  ): Vector2 | null {
+    const expandedHalfW = halfW + radius;
+    const expandedHalfH = halfH + radius;
+    const dx = position.x - center.x;
+    const dy = position.y - center.y;
+    if (Math.abs(dx) > expandedHalfW || Math.abs(dy) > expandedHalfH) {
+      return null;
+    }
+    const overlapX = expandedHalfW - Math.abs(dx);
+    const overlapY = expandedHalfH - Math.abs(dy);
     if (overlapX < overlapY) {
       const dir = dx >= 0 ? 1 : -1;
       return new Vector2(dir * overlapX, 0);
@@ -919,7 +1046,7 @@ export class World {
     for (const village of this.villages) {
       for (const chest of village.chests) {
         ctx.fillStyle = chest.opened ? CHEST_OPEN_COLOR : CHEST_CLOSED_COLOR;
-        ctx.fillRect(chest.position.x - 4, chest.position.y - 3, 8, 6);
+        ctx.fillRect(chest.position.x - 3, chest.position.y - 3, 6, 6);
       }
     }
     ctx.restore();
