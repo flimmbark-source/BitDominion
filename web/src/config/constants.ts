@@ -7,7 +7,7 @@ export const FPS = 60;
 
 export const ARENA_PADDING = 36;
 
-export const CASTLE_POS = new Vector2(WIDTH / 2, HEIGHT / 2);
+export const CASTLE_POS = new Vector2(WIDTH - 80, 80);
 export const CASTLE_SIZE = 20;
 export const CASTLE_WIN_RADIUS = 25;
 export const CASTLE_STAY_TIME = 3.0;
