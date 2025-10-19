@@ -341,8 +341,85 @@ export class World {
       }
     }
 
+    if (!segment.blocked) {
+      for (const obstacle of this.buildingObstacles) {
+        if (!obstacle.blocksVision) {
+          continue;
+        }
+        if (this.isPointInsideAabb(from, obstacle.center, obstacle.halfWidth, obstacle.halfHeight)) {
+          continue;
+        }
+        if (this.intersectsAabb(from, to, obstacle.center, obstacle.halfWidth, obstacle.halfHeight)) {
+          segment.blocked = true;
+          break;
+        }
+      }
+    }
+
     this.losSegments.push(segment);
     return !segment.blocked;
+  }
+
+  raycastObstacles(origin: Vector2, direction: Vector2, maxDistance: number): number {
+    if (maxDistance <= 0) {
+      return 0;
+    }
+
+    const dirLength = Math.sqrt(direction.x * direction.x + direction.y * direction.y);
+    if (dirLength === 0) {
+      return maxDistance;
+    }
+
+    const dirX = direction.x / dirLength;
+    const dirY = direction.y / dirLength;
+
+    let closest = Infinity;
+
+    for (const tree of this.trees) {
+      const hit = this.raycastCircle(origin, dirX, dirY, tree.position, tree.radius, maxDistance);
+      if (hit !== null && hit < closest) {
+        closest = hit;
+      }
+    }
+
+    for (const hut of this.huts) {
+      const hit = this.raycastRect(
+        origin,
+        dirX,
+        dirY,
+        hut.center,
+        hut.width / 2,
+        hut.height / 2,
+        maxDistance
+      );
+      if (hit !== null && hit < closest) {
+        closest = hit;
+      }
+    }
+
+    for (const obstacle of this.buildingObstacles) {
+      if (!obstacle.blocksVision) {
+        continue;
+      }
+      const hit = this.raycastRect(
+        origin,
+        dirX,
+        dirY,
+        obstacle.center,
+        obstacle.halfWidth,
+        obstacle.halfHeight,
+        maxDistance,
+        { skipIfInside: true }
+      );
+      if (hit !== null && hit < closest) {
+        closest = hit;
+      }
+    }
+
+    if (!Number.isFinite(closest)) {
+      return maxDistance;
+    }
+    return Math.min(closest, maxDistance);
   }
 
   getLosSegments(): readonly LosSegment[] {
@@ -822,6 +899,15 @@ export class World {
     return new Vector2(0, dir * overlapY);
   }
 
+  private isPointInsideAabb(point: Vector2, center: Vector2, halfW: number, halfH: number): boolean {
+    return (
+      point.x >= center.x - halfW &&
+      point.x <= center.x + halfW &&
+      point.y >= center.y - halfH &&
+      point.y <= center.y + halfH
+    );
+  }
+
   private intersectsCircle(from: Vector2, to: Vector2, center: Vector2, radius: number): boolean {
     const startToCenter = center.clone().subtract(from);
     const line = to.clone().subtract(from);
@@ -879,6 +965,156 @@ export class World {
       }
     }
     return true;
+  }
+
+  private intersectsAabb(
+    from: Vector2,
+    to: Vector2,
+    center: Vector2,
+    halfW: number,
+    halfH: number
+  ): boolean {
+    const minX = center.x - halfW;
+    const maxX = center.x + halfW;
+    const minY = center.y - halfH;
+    const maxY = center.y + halfH;
+
+    let t0 = 0;
+    let t1 = 1;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+
+    const checks: Array<[number, number]> = [
+      [-dx, from.x - minX],
+      [dx, maxX - from.x],
+      [-dy, from.y - minY],
+      [dy, maxY - from.y]
+    ];
+
+    for (const [p, q] of checks) {
+      if (p === 0) {
+        if (q < 0) {
+          return false;
+        }
+        continue;
+      }
+      const r = q / p;
+      if (p < 0) {
+        if (r > t1) {
+          return false;
+        }
+        if (r > t0) {
+          t0 = r;
+        }
+      } else if (p > 0) {
+        if (r < t0) {
+          return false;
+        }
+        if (r < t1) {
+          t1 = r;
+        }
+      }
+    }
+    return true;
+  }
+
+  private raycastCircle(
+    origin: Vector2,
+    dirX: number,
+    dirY: number,
+    center: Vector2,
+    radius: number,
+    maxDistance: number
+  ): number | null {
+    const mx = origin.x - center.x;
+    const my = origin.y - center.y;
+    const c = mx * mx + my * my - radius * radius;
+    if (c <= 0) {
+      return 0;
+    }
+    const b = mx * dirX + my * dirY;
+    const discriminant = b * b - c;
+    if (discriminant < 0) {
+      return null;
+    }
+    const sqrt = Math.sqrt(discriminant);
+    const t1 = -b - sqrt;
+    if (t1 >= 0 && t1 <= maxDistance) {
+      return t1;
+    }
+    const t2 = -b + sqrt;
+    if (t2 >= 0 && t2 <= maxDistance) {
+      return t2;
+    }
+    return null;
+  }
+
+  private raycastRect(
+    origin: Vector2,
+    dirX: number,
+    dirY: number,
+    center: Vector2,
+    halfW: number,
+    halfH: number,
+    maxDistance: number,
+    options?: { skipIfInside?: boolean }
+  ): number | null {
+    const { skipIfInside = false } = options ?? {};
+    const minX = center.x - halfW;
+    const maxX = center.x + halfW;
+    const minY = center.y - halfH;
+    const maxY = center.y + halfH;
+
+    if (
+      skipIfInside &&
+      origin.x >= minX &&
+      origin.x <= maxX &&
+      origin.y >= minY &&
+      origin.y <= maxY
+    ) {
+      return null;
+    }
+
+    let tMin = 0;
+    let tMax = maxDistance;
+
+    if (dirX !== 0) {
+      const tx1 = (minX - origin.x) / dirX;
+      const tx2 = (maxX - origin.x) / dirX;
+      const txMin = Math.min(tx1, tx2);
+      const txMax = Math.max(tx1, tx2);
+      tMin = Math.max(tMin, txMin);
+      tMax = Math.min(tMax, txMax);
+    } else if (origin.x < minX || origin.x > maxX) {
+      return null;
+    }
+
+    if (dirY !== 0) {
+      const ty1 = (minY - origin.y) / dirY;
+      const ty2 = (maxY - origin.y) / dirY;
+      const tyMin = Math.min(ty1, ty2);
+      const tyMax = Math.max(ty1, ty2);
+      tMin = Math.max(tMin, tyMin);
+      tMax = Math.min(tMax, tyMax);
+    } else if (origin.y < minY || origin.y > maxY) {
+      return null;
+    }
+
+    if (tMax < 0 || tMin > tMax) {
+      return null;
+    }
+
+    if (tMin < 0) {
+      if (tMax >= 0 && tMax <= maxDistance) {
+        return tMax;
+      }
+      return null;
+    }
+
+    if (tMin <= maxDistance) {
+      return tMin;
+    }
+    return null;
   }
 
   private drawHuts(ctx: CanvasRenderingContext2D): void {
