@@ -271,7 +271,7 @@ export class World {
       return [];
     }
 
-    const baseRayCount = 120;
+    const baseRayCount = 160;
     const epsilon = 0.0006;
     const twoPi = Math.PI * 2;
     const rawAngles: number[] = [];
@@ -289,10 +289,24 @@ export class World {
     }
 
     for (const tree of this.trees) {
-      const angle = Math.atan2(tree.position.y - origin.y, tree.position.x - origin.x);
+      const dx = tree.position.x - origin.x;
+      const dy = tree.position.y - origin.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance === 0) {
+        continue;
+      }
+
+      const angle = Math.atan2(dy, dx);
       addAngle(angle);
       addAngle(angle - epsilon);
       addAngle(angle + epsilon);
+
+      if (distance > tree.radius) {
+        const clamped = Math.min(0.9999, tree.radius / distance);
+        const spread = Math.asin(clamped);
+        addAngle(angle - spread);
+        addAngle(angle + spread);
+      }
     }
 
     for (const hut of this.huts) {
@@ -309,6 +323,18 @@ export class World {
         addAngle(angle);
         addAngle(angle - epsilon);
         addAngle(angle + epsilon);
+      }
+
+      const edges = [
+        { x: hut.center.x - halfW, y: hut.center.y },
+        { x: hut.center.x + halfW, y: hut.center.y },
+        { x: hut.center.x, y: hut.center.y - halfH },
+        { x: hut.center.x, y: hut.center.y + halfH }
+      ];
+      for (const edge of edges) {
+        const angle = Math.atan2(edge.y - origin.y, edge.x - origin.x);
+        addAngle(angle - epsilon * 2);
+        addAngle(angle + epsilon * 2);
       }
     }
 
