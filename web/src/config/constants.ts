@@ -26,9 +26,9 @@ export const KNIGHT_SPEED = 0.6;
 export const KNIGHT_STOP_DISTANCE = 5;
 export const KNIGHT_HP = 5;
 
-export const MELEE_RANGE = 40;
+export const MELEE_RANGE = 32;
 export const ARC_WIDTH_DEG = 100;
-export const SWING_DURATION = 0.25;
+export const SWING_DURATION = 0.4;
 export const SWING_COOLDOWN = 0.8;
 export const SWING_ARC_POINTS = 16;
 
