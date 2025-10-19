@@ -177,3 +177,54 @@ export const VILLAGER_SPEED = 8;
 export const ROAD_WIDTH = 18;
 export const CHEST_OPEN_RADIUS = 14;
 export const LOS_DEBUG_TTL = 0.3;
+
+export type BuildingType = 'watchtower' | 'barricade' | 'spike' | 'beacon' | 'workshop';
+
+export interface BuildingDefinition {
+  width: number;
+  height: number;
+  cost: number;
+  maxHp: number;
+  buildTime: number;
+}
+
+export const BUILDING_DEFINITIONS: Record<BuildingType, BuildingDefinition> = {
+  watchtower: { width: 8, height: 8, cost: 20, maxHp: 3, buildTime: 2.0 },
+  barricade: { width: 10, height: 4, cost: 12, maxHp: 4, buildTime: 1.0 },
+  spike: { width: 6, height: 6, cost: 10, maxHp: 1, buildTime: 0.8 },
+  beacon: { width: 6, height: 6, cost: 15, maxHp: 2, buildTime: 1.0 },
+  workshop: { width: 10, height: 10, cost: 25, maxHp: 4, buildTime: 2.2 }
+};
+
+export const SUPPLIES_PASSIVE_INTERVAL = 4.0;
+export const SUPPLIES_PASSIVE_AMOUNT = 1;
+export const SUPPLIES_SEAL_BONUS = 3;
+export const SUPPLIES_CHEST_BONUS = 10;
+
+export const BUILDING_CONSTRUCTION_RADIUS = 18;
+export const BUILDING_MIN_SPACING = 18;
+export const BUILDING_REPAIR_TIME = 1.0;
+export const BUILDING_REPAIR_COST = 3;
+export const BUILDING_DISMANTLE_TIME = 0.6;
+export const BARRICADE_KNIGHT_SPEED_SCALE = 0.9;
+
+export const WATCHTOWER_RANGE = 160;
+export const WATCHTOWER_FIRE_INTERVAL = 0.6;
+export const WATCHTOWER_DAMAGE = 1;
+export const WATCHTOWER_PROJECTILE_SPEED = 420;
+export const WATCHTOWER_NOISE_STRENGTH = 6;
+export const WATCHTOWER_AURA_MULTIPLIER = 1.25;
+export const WORKSHOP_AURA_RADIUS = 140;
+
+export const LURE_BEACON_NOISE_INTERVAL = 2.0;
+export const LURE_BEACON_NOISE_STRENGTH = 10;
+
+export const SPIKE_TRAP_SLOW_FACTOR = 0.7;
+export const SPIKE_TRAP_SLOW_DURATION = 0.8;
+
+export const BUILDING_ATTACK_NOISE = 5;
+export const BUILDING_ATTACK_INTERVAL = 0.5;
+
+export const ENEMY_BUILDING_TARGET_RANGE = 180;
+export const ENEMY_BUILDING_TARGET_CHANCE = 0.3;
+export const ENEMY_BUILDING_FOCUS_TIME = 4.0;

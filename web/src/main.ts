@@ -18,26 +18,51 @@ if (!context) {
 
 const game = new Game();
 
-canvas.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0) {
-    return;
-  }
+const toCanvasCoords = (event: PointerEvent) => {
   const rect = canvas.getBoundingClientRect();
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;
   const x = (event.clientX - rect.left) * scaleX;
   const y = (event.clientY - rect.top) * scaleY;
-  game.onPointer(x, y, event.timeStamp / 1000);
+  return { x, y };
+};
+
+canvas.addEventListener('pointerdown', (event) => {
+  const { x, y } = toCanvasCoords(event);
+  if (event.button === 2) {
+    event.preventDefault();
+  }
+  game.onPointerDown(x, y, event.button, event.timeStamp / 1000);
+});
+
+canvas.addEventListener('pointermove', (event) => {
+  const { x, y } = toCanvasCoords(event);
+  game.onPointerMove(x, y);
+});
+
+canvas.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
 });
 
 window.addEventListener('keydown', (event) => {
-  if (event.key.toLowerCase() === 'r') {
-    game.reset();
-  } else if (event.key === 'F1') {
+  if (event.key === 'F1') {
     event.preventDefault();
     game.toggleAnchorDebug();
-  } else if (event.key.toLowerCase() === 'b') {
+    return;
+  }
+
+  const key = event.key.toLowerCase();
+  if (key === 'r') {
+    game.reset();
+  } else if (key === 'b') {
+    event.preventDefault();
+    game.toggleBuildMode();
+  } else if (key === 'c') {
     game.toggleCanopy();
+  } else if (key >= '1' && key <= '5') {
+    game.selectBlueprint(Number(key) - 1);
+  } else if (key === 'x') {
+    game.startDismantle();
   }
 });
 
