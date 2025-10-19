@@ -66,4 +66,14 @@ export class Vector2 {
     this.y = Math.max(minY, Math.min(maxY, this.y));
     return this;
   }
+
+  limit(maxLength: number): this {
+    const maxLengthSq = maxLength * maxLength;
+    const currentLengthSq = this.lengthSq();
+    if (currentLengthSq > maxLengthSq && currentLengthSq > 0) {
+      const currentLength = Math.sqrt(currentLengthSq);
+      this.scale(maxLength / currentLength);
+    }
+    return this;
+  }
 }
