@@ -325,238 +325,28 @@ export class World {
 
   hasLineOfSight(from: Vector2, to: Vector2): boolean {
     const segment: LosSegment = { from: from.clone(), to: to.clone(), blocked: false, ttl: LOS_DEBUG_TTL };
-    const delta = to.clone().subtract(from);
-    const distance = delta.length();
-    if (distance === 0) {
-      this.losSegments.push(segment);
-      return true;
-    }
-
-    const direction = delta.scale(1 / distance);
-    const hitDistance = this.castVisionRay(from, direction, distance);
-    const blocked = hitDistance + 0.001 < distance;
-    segment.blocked = blocked;
-    this.losSegments.push(segment);
-    return !blocked;
-  }
-
-  raycastObstacles(origin: Vector2, direction: Vector2, maxDistance: number): number {
-    return this.castVisionRay(origin, direction, maxDistance);
-  }
-
-  computeVisibilityPolygon(origin: Vector2, radius: number): Vector2[] {
-    if (radius <= 0) {
-      return [];
-    }
-
-    const baseRayCount = 120;
-    const epsilon = 0.0006;
-    const twoPi = Math.PI * 2;
-    const rawAngles: number[] = [];
-
-    const addAngle = (angle: number) => {
-      let normalized = angle % twoPi;
-      if (normalized < 0) {
-        normalized += twoPi;
-      }
-      rawAngles.push(normalized);
-    };
-
-    for (let i = 0; i < baseRayCount; i++) {
-      addAngle((i / baseRayCount) * twoPi);
-    }
-
     for (const tree of this.trees) {
-      const angle = Math.atan2(tree.position.y - origin.y, tree.position.x - origin.x);
-      addAngle(angle);
-      addAngle(angle - epsilon);
-      addAngle(angle + epsilon);
-    }
-
-    const addRectAngles = (center: Vector2, halfW: number, halfH: number) => {
-      const corners = [
-        { x: center.x - halfW, y: center.y - halfH },
-        { x: center.x + halfW, y: center.y - halfH },
-        { x: center.x + halfW, y: center.y + halfH },
-        { x: center.x - halfW, y: center.y + halfH }
-      ];
-      for (const corner of corners) {
-        const angle = Math.atan2(corner.y - origin.y, corner.x - origin.x);
-        addAngle(angle);
-        addAngle(angle - epsilon);
-        addAngle(angle + epsilon);
-      }
-    };
-
-    for (const hut of this.huts) {
-      addRectAngles(hut.center, hut.width / 2, hut.height / 2);
-    }
-
-    for (const obstacle of this.buildingObstacles) {
-      if (!obstacle.solid) {
-        continue;
-      }
-      addRectAngles(obstacle.center, obstacle.halfWidth, obstacle.halfHeight);
-    }
-
-    rawAngles.sort((a, b) => a - b);
-
-    const angles: number[] = [];
-    const minSeparation = 0.0001;
-    for (const angle of rawAngles) {
-      if (!angles.length || angle - angles[angles.length - 1] > minSeparation) {
-        angles.push(angle);
+      if (this.intersectsCircle(from, to, tree.position, tree.radius)) {
+        segment.blocked = true;
+        break;
       }
     }
 
-    const polygon: Vector2[] = [];
-    for (const angle of angles) {
-      const dir = new Vector2(Math.cos(angle), Math.sin(angle));
-      let distance = this.castVisionRay(origin, dir, radius);
-      const boundaryDistance = this.rayAabbDistance(origin, dir, 0, 0, WIDTH, HEIGHT);
-      if (boundaryDistance != null) {
-        distance = Math.min(distance, boundaryDistance);
+    if (!segment.blocked) {
+      for (const hut of this.huts) {
+        if (this.intersectsRect(from, to, hut)) {
+          segment.blocked = true;
+          break;
+        }
       }
-      distance = Math.min(distance, radius);
-      const finalDistance = Math.max(0, distance - 0.01);
-      polygon.push(new Vector2(origin.x + dir.x * finalDistance, origin.y + dir.y * finalDistance));
     }
 
-    return polygon;
+    this.losSegments.push(segment);
+    return !segment.blocked;
   }
 
   getLosSegments(): readonly LosSegment[] {
     return this.losSegments;
-  }
-
-  private castVisionRay(origin: Vector2, direction: Vector2, maxDistance: number): number {
-    let closest = maxDistance;
-    for (const tree of this.trees) {
-      const distance = this.rayCircleDistance(origin, direction, tree.position, tree.radius);
-      if (distance != null && distance >= 0 && distance < closest) {
-        closest = distance;
-      }
-    }
-
-    for (const hut of this.huts) {
-      const distance = this.rayRectDistance(origin, direction, hut);
-      if (distance != null && distance >= 0 && distance < closest) {
-        closest = distance;
-      }
-    }
-
-    for (const obstacle of this.buildingObstacles) {
-      if (!obstacle.blocksVision) {
-        continue;
-      }
-      const distance = this.rayRectDistanceGeneric(origin, direction, obstacle);
-      if (distance != null && distance >= 0 && distance < closest) {
-        closest = distance;
-      }
-    }
-
-    return closest;
-  }
-
-  private rayCircleDistance(
-    origin: Vector2,
-    direction: Vector2,
-    center: Vector2,
-    radius: number
-  ): number | null {
-    const ox = origin.x - center.x;
-    const oy = origin.y - center.y;
-    const dx = direction.x;
-    const dy = direction.y;
-    const b = 2 * (dx * ox + dy * oy);
-    const c = ox * ox + oy * oy - radius * radius;
-    const discriminant = b * b - 4 * c;
-    if (discriminant < 0) {
-      return null;
-    }
-    const sqrt = Math.sqrt(discriminant);
-    const t1 = (-b - sqrt) / 2;
-    const t2 = (-b + sqrt) / 2;
-    if (t2 < 0) {
-      return null;
-    }
-    if (t1 >= 0) {
-      return t1;
-    }
-    return t2;
-  }
-
-  private rayRectDistance(origin: Vector2, direction: Vector2, hut: Hut): number | null {
-    const halfW = hut.width / 2;
-    const halfH = hut.height / 2;
-    const minX = hut.center.x - halfW;
-    const maxX = hut.center.x + halfW;
-    const minY = hut.center.y - halfH;
-    const maxY = hut.center.y + halfH;
-    return this.rayAabbDistance(origin, direction, minX, minY, maxX, maxY);
-  }
-
-  private rayRectDistanceGeneric(origin: Vector2, direction: Vector2, obstacle: BuildingObstacle): number | null {
-    const minX = obstacle.center.x - obstacle.halfWidth;
-    const maxX = obstacle.center.x + obstacle.halfWidth;
-    const minY = obstacle.center.y - obstacle.halfHeight;
-    const maxY = obstacle.center.y + obstacle.halfHeight;
-    return this.rayAabbDistance(origin, direction, minX, minY, maxX, maxY);
-  }
-
-  private rayAabbDistance(
-    origin: Vector2,
-    direction: Vector2,
-    minX: number,
-    minY: number,
-    maxX: number,
-    maxY: number
-  ): number | null {
-    const epsilon = 1e-8;
-    let tMin = 0;
-    let tMax = Number.POSITIVE_INFINITY;
-
-    if (Math.abs(direction.x) < epsilon) {
-      if (origin.x < minX || origin.x > maxX) {
-        return null;
-      }
-    } else {
-      let tx1 = (minX - origin.x) / direction.x;
-      let tx2 = (maxX - origin.x) / direction.x;
-      if (tx1 > tx2) {
-        [tx1, tx2] = [tx2, tx1];
-      }
-      tMin = Math.max(tMin, tx1);
-      tMax = Math.min(tMax, tx2);
-    }
-
-    if (Math.abs(direction.y) < epsilon) {
-      if (origin.y < minY || origin.y > maxY) {
-        return null;
-      }
-    } else {
-      let ty1 = (minY - origin.y) / direction.y;
-      let ty2 = (maxY - origin.y) / direction.y;
-      if (ty1 > ty2) {
-        [ty1, ty2] = [ty2, ty1];
-      }
-      tMin = Math.max(tMin, ty1);
-      tMax = Math.min(tMax, ty2);
-    }
-
-    if (tMax < tMin) {
-      return null;
-    }
-
-    if (tMax < 0) {
-      return null;
-    }
-
-    if (tMin >= 0) {
-      return tMin;
-    }
-
-    return tMax >= 0 ? tMax : null;
   }
 
   isPointOnRoad(_point: Vector2): boolean {
@@ -1030,6 +820,65 @@ export class World {
     }
     const dir = dy >= 0 ? 1 : -1;
     return new Vector2(0, dir * overlapY);
+  }
+
+  private intersectsCircle(from: Vector2, to: Vector2, center: Vector2, radius: number): boolean {
+    const startToCenter = center.clone().subtract(from);
+    const line = to.clone().subtract(from);
+    const lengthSq = line.lengthSq();
+    if (lengthSq === 0) {
+      return startToCenter.length() <= radius;
+    }
+    const t = clamp((startToCenter.x * line.x + startToCenter.y * line.y) / lengthSq, 0, 1);
+    const closest = new Vector2(from.x + line.x * t, from.y + line.y * t);
+    return closest.distanceTo(center) <= radius;
+  }
+
+  private intersectsRect(from: Vector2, to: Vector2, hut: Hut): boolean {
+    const halfW = hut.width / 2;
+    const halfH = hut.height / 2;
+    const minX = hut.center.x - halfW;
+    const maxX = hut.center.x + halfW;
+    const minY = hut.center.y - halfH;
+    const maxY = hut.center.y + halfH;
+
+    let t0 = 0;
+    let t1 = 1;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+
+    const checks: Array<[number, number]> = [
+      [-dx, from.x - minX],
+      [dx, maxX - from.x],
+      [-dy, from.y - minY],
+      [dy, maxY - from.y]
+    ];
+
+    for (const [p, q] of checks) {
+      if (p === 0) {
+        if (q < 0) {
+          return false;
+        }
+        continue;
+      }
+      const r = q / p;
+      if (p < 0) {
+        if (r > t1) {
+          return false;
+        }
+        if (r > t0) {
+          t0 = r;
+        }
+      } else if (p > 0) {
+        if (r < t0) {
+          return false;
+        }
+        if (r < t1) {
+          t1 = r;
+        }
+      }
+    }
+    return true;
   }
 
   private drawHuts(ctx: CanvasRenderingContext2D): void {
