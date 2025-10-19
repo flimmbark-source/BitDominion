@@ -25,7 +25,6 @@ export const KNIGHT_FRICTION = 0.96;
 export const KNIGHT_SPEED = 0.6;
 export const KNIGHT_STOP_DISTANCE = 5;
 export const KNIGHT_HP = 5;
-export const PLAYER_VISION_RADIUS = 220;
 
 export const MELEE_RANGE = 32;
 export const ARC_WIDTH_DEG = 100;
