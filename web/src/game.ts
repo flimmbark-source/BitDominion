@@ -20,6 +20,7 @@ import {
   HP_BAR_WIDTH,
   HUD_COLOR,
   KNIGHT_HP,
+  PLAYER_VISION_RADIUS,
   MAX_UNITS,
   NOISE_ATTACK_STRENGTH,
   NOISE_PING_DURATION,
@@ -330,6 +331,8 @@ export class Game {
     this.knight.draw(ctx);
     this.knight.drawSwing(ctx);
 
+    this._drawFog(ctx);
+
     this.world.drawCanopy(ctx);
     this.world.drawVillageAlarms(ctx);
     this._drawNoisePings(ctx);
@@ -410,6 +413,58 @@ export class Game {
       ping.age += dt;
     }
     this.noisePings = this.noisePings.filter((ping) => ping.age < ping.duration);
+  }
+
+  private _drawFog(ctx: CanvasRenderingContext2D): void {
+    const polygon = this.world.computeVisibilityPolygon(this.knight.pos, PLAYER_VISION_RADIUS);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
+    ctx.beginPath();
+    ctx.rect(0, 0, WIDTH, HEIGHT);
+    if (polygon.length > 0) {
+      ctx.moveTo(polygon[0].x, polygon[0].y);
+      for (let i = 1; i < polygon.length; i++) {
+        ctx.lineTo(polygon[i].x, polygon[i].y);
+      }
+      ctx.closePath();
+      ctx.fill('evenodd');
+    } else {
+      ctx.fill();
+    }
+    ctx.restore();
+
+    if (polygon.length === 0) {
+      return;
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(polygon[0].x, polygon[0].y);
+    for (let i = 1; i < polygon.length; i++) {
+      ctx.lineTo(polygon[i].x, polygon[i].y);
+    }
+    ctx.closePath();
+    ctx.clip();
+
+    const gradient = ctx.createRadialGradient(
+      this.knight.pos.x,
+      this.knight.pos.y,
+      PLAYER_VISION_RADIUS * 0.45,
+      this.knight.pos.x,
+      this.knight.pos.y,
+      PLAYER_VISION_RADIUS
+    );
+    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0.6)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(
+      this.knight.pos.x - PLAYER_VISION_RADIUS,
+      this.knight.pos.y - PLAYER_VISION_RADIUS,
+      PLAYER_VISION_RADIUS * 2,
+      PLAYER_VISION_RADIUS * 2
+    );
+    ctx.restore();
   }
 
   private _drawNoisePings(ctx: CanvasRenderingContext2D): void {
