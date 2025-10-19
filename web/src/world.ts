@@ -19,6 +19,7 @@ import {
   VILLAGER_ALERT_COLOR,
   VILLAGER_FLEE_COLOR,
   VILLAGER_IDLE_COLOR,
+  VILLAGER_HP,
   VILLAGER_IDLE_RADIUS,
   VILLAGER_SPEED,
   WIDTH
@@ -46,7 +47,7 @@ export interface Chest {
 
 type VillagerState = 'idle' | 'alert' | 'flee';
 
-interface Villager {
+export interface Villager {
   pos: Vector2;
   home: Vector2;
   state: VillagerState;
@@ -54,6 +55,9 @@ interface Villager {
   wanderTarget: Vector2 | null;
   wanderTimer: number;
   panicTarget: Vector2 | null;
+  hp: number;
+  alive: boolean;
+  hurtTimer: number;
 }
 
 export interface Village {
@@ -85,6 +89,7 @@ export interface WorldUpdateContext {
 
 const VILLAGER_ALERT_DURATION = 1.8;
 const VILLAGER_FLEE_DURATION = 2.6;
+const VILLAGER_HURT_FLASH = 0.25;
 
 function mulberry32(seed: number): () => number {
   return function random() {
@@ -332,7 +337,6 @@ export class World {
       const radius = 60 + i * 10;
       const baseTreeCount = 12 + i * 4;
       const treeCount = baseTreeCount + Math.floor(rand() * 5);
-      const trees: Tree[] = [];
       for (let t = 0; t < treeCount; t++) {
         const angle = rand() * Math.PI * 2;
         const distance = Math.sqrt(rand()) * radius;
@@ -403,7 +407,10 @@ export class World {
           timer: 0,
           wanderTarget: null,
           wanderTimer: 0,
-          panicTarget: null
+          panicTarget: null,
+          hp: VILLAGER_HP,
+          alive: true,
+          hurtTimer: 0
         });
       }
 
@@ -438,6 +445,12 @@ export class World {
 
       let villageAlarmed = false;
       for (const villager of village.villagers) {
+        if (villager.hurtTimer > 0) {
+          villager.hurtTimer = Math.max(0, villager.hurtTimer - dt);
+        }
+        if (!villager.alive) {
+          continue;
+        }
         const previousState = villager.state;
         if (nearestMonster) {
           villager.state = 'flee';
@@ -493,6 +506,9 @@ export class World {
     monster: DarkUnit | null,
     knightPos: Vector2
   ): void {
+    if (!villager.alive) {
+      return;
+    }
     const speed = VILLAGER_SPEED * dt;
     switch (villager.state) {
       case 'idle':
@@ -695,6 +711,9 @@ export class World {
     ctx.save();
     for (const village of this.villages) {
       for (const villager of village.villagers) {
+        if (!villager.alive) {
+          continue;
+        }
         switch (villager.state) {
           case 'alert':
             ctx.fillStyle = VILLAGER_ALERT_COLOR;
@@ -707,9 +726,52 @@ export class World {
             break;
         }
         ctx.fillRect(villager.pos.x - 2, villager.pos.y - 2, 4, 4);
+        if (villager.hurtTimer > 0) {
+          const ratio = Math.min(1, villager.hurtTimer / VILLAGER_HURT_FLASH);
+          ctx.globalAlpha = 0.6 * ratio;
+          ctx.strokeStyle = '#FF5C5C';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(villager.pos.x - 3, villager.pos.y - 3, 6, 6);
+          ctx.globalAlpha = 1;
+        }
       }
     }
     ctx.restore();
+  }
+
+  findClosestVillager(position: Vector2, range: number): Villager | null {
+    let closest: Villager | null = null;
+    let closestDistSq = range * range;
+    for (const village of this.villages) {
+      for (const villager of village.villagers) {
+        if (!villager.alive) {
+          continue;
+        }
+        const dx = villager.pos.x - position.x;
+        const dy = villager.pos.y - position.y;
+        const distSq = dx * dx + dy * dy;
+        if (distSq <= closestDistSq) {
+          closest = villager;
+          closestDistSq = distSq;
+        }
+      }
+    }
+    return closest;
+  }
+
+  damageVillager(villager: Villager, amount: number): void {
+    if (!villager.alive || amount <= 0) {
+      return;
+    }
+    villager.hp = Math.max(0, villager.hp - amount);
+    villager.hurtTimer = VILLAGER_HURT_FLASH;
+    if (villager.hp === 0) {
+      villager.alive = false;
+      villager.state = 'idle';
+      villager.timer = 0;
+      villager.panicTarget = null;
+      villager.wanderTarget = null;
+    }
   }
 
   drawVillageAlarms(ctx: CanvasRenderingContext2D): void {

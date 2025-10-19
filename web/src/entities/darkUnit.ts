@@ -15,7 +15,6 @@ import {
   TANK_CHASE_PERSIST_DISTANCE,
   TANK_KNOCKBACK_STRENGTH,
   UNIT_COLORS,
-  UNIT_DAMAGE_COOLDOWN,
   UNIT_DETECTION_LERP,
   UNIT_STATS,
   UNIT_WANDER_INTERVAL,
@@ -33,11 +32,15 @@ export class DarkUnit {
   public velocity = new Vector2();
   public detecting = false;
   public wanderTimer = 0;
-  public damageTimer = 0;
   public alive = true;
   public hp: number;
   public behavior: DarkUnitBehavior = 'idle';
 
+  private attackCooldownTimer = 0;
+  private attackVisualTimer = 0;
+  private attackVisualDuration = 0;
+  private lastAttackTarget: Vector2 | null = null;
+  private lastAttackOrigin: Vector2 | null = null;
   private lineOfSightTimer = 0;
   private searchTimer = 0;
   private searchAngle = 0;
@@ -134,8 +137,16 @@ export class DarkUnit {
     world.resolveStaticCollisions(this.pos, this.getHalfSize());
     world.constrainToArena(this, this.getHalfSize(), { bounce: true });
 
-    if (this.damageTimer > 0) {
-      this.damageTimer = Math.max(0, this.damageTimer - dt);
+    if (this.attackCooldownTimer > 0) {
+      this.attackCooldownTimer = Math.max(0, this.attackCooldownTimer - dt);
+    }
+    if (this.attackVisualTimer > 0) {
+      this.attackVisualTimer = Math.max(0, this.attackVisualTimer - dt);
+      if (this.attackVisualTimer === 0) {
+        this.lastAttackTarget = null;
+        this.lastAttackOrigin = null;
+        this.attackVisualDuration = 0;
+      }
     }
   }
 
@@ -168,17 +179,46 @@ export class DarkUnit {
     return !this.alive;
   }
 
-  attemptDamage(knight: Knight): boolean {
-    if (!this.alive || this.damageTimer > 0) {
-      return false;
+  tryAttack(knight: Knight, world: World): void {
+    if (!this.alive || this.attackCooldownTimer > 0) {
+      return;
     }
-    if (this.pos.distanceTo(knight.pos) < 6) {
-      this.damageTimer = UNIT_DAMAGE_COOLDOWN;
-      const stats = UNIT_STATS[this.type];
+
+    const stats = UNIT_STATS[this.type];
+    const isRanged = stats.attackType === 'ranged';
+    const attackRange = stats.attackRange;
+
+    let target: 'knight' | 'villager' | null = null;
+    let targetPos: Vector2 | null = null;
+    let villagerTarget: ReturnType<World['findClosestVillager']> = null;
+
+    const knightDistance = this.pos.distanceTo(knight.pos);
+    if (knightDistance <= attackRange && (!isRanged || world.hasLineOfSight(this.pos, knight.pos))) {
+      target = 'knight';
+      targetPos = knight.pos.clone();
+    } else {
+      villagerTarget = world.findClosestVillager(this.pos, attackRange);
+      if (villagerTarget && (!isRanged || world.hasLineOfSight(this.pos, villagerTarget.pos))) {
+        target = 'villager';
+        targetPos = villagerTarget.pos.clone();
+      }
+    }
+
+    if (!target || !targetPos) {
+      return;
+    }
+
+    this.attackCooldownTimer = stats.attackCooldown;
+    this.attackVisualTimer = stats.attackVisualDuration;
+    this.attackVisualDuration = stats.attackVisualDuration;
+    this.lastAttackTarget = targetPos.clone();
+    this.lastAttackOrigin = this.pos.clone();
+
+    if (target === 'knight') {
       knight.hp = Math.max(0, knight.hp - stats.attackDamage);
-      return true;
+    } else if (villagerTarget) {
+      world.damageVillager(villagerTarget, stats.attackDamage);
     }
-    return false;
   }
 
   takeDamage(amount: number): void {
@@ -195,7 +235,15 @@ export class DarkUnit {
     const colors = UNIT_COLORS[this.type];
     const half = this.getHalfSize();
     const blended = mixColors(colors.base, colors.alert, this.detectionTint);
-    const fill = this.detecting ? mixColors(blended, '#FFFFFF', Math.min(0.5, this.detectionTint * 0.6)) : blended;
+    const fillBase = this.detecting
+      ? mixColors(blended, '#FFFFFF', Math.min(0.5, this.detectionTint * 0.6))
+      : blended;
+    let fill = fillBase;
+    if (this.attackVisualTimer > 0 && this.attackVisualDuration > 0) {
+      const completion = 1 - this.attackVisualTimer / this.attackVisualDuration;
+      const flashStrength = Math.max(0, Math.min(1, 0.6 * (1 - completion)));
+      fill = mixColors(fillBase, '#FFFFFF', flashStrength);
+    }
     ctx.fillStyle = fill;
     ctx.fillRect(this.pos.x - half, this.pos.y - half, half * 2, half * 2);
 
@@ -209,6 +257,80 @@ export class DarkUnit {
       ctx.stroke();
       ctx.restore();
     }
+
+    if (this.attackVisualTimer > 0 && this.lastAttackTarget) {
+      this.drawAttackVisual(ctx);
+    }
+  }
+
+  private drawAttackVisual(ctx: CanvasRenderingContext2D): void {
+    if (!this.lastAttackTarget) {
+      return;
+    }
+    const stats = UNIT_STATS[this.type];
+    const origin = this.lastAttackOrigin ?? this.pos;
+    const duration = this.attackVisualDuration > 0 ? this.attackVisualDuration : 1;
+    const completion = Math.min(1, Math.max(0, 1 - this.attackVisualTimer / duration));
+    const opacity = 1 - completion;
+
+    ctx.save();
+    switch (this.type) {
+      case 'scout': {
+        const direction = this.lastAttackTarget.clone().subtract(origin);
+        if (direction.lengthSq() === 0) {
+          direction.set(1, 0);
+        } else {
+          direction.normalize();
+        }
+        const reach = Math.min(stats.attackRange + 6, 18);
+        const start = origin.clone().add(direction.clone().scale(2));
+        const end = origin.clone().add(direction.clone().scale(reach));
+        ctx.strokeStyle = `rgba(255, 220, 200, ${0.85 * opacity})`;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.4 * opacity;
+        ctx.fillStyle = '#FFD6D6';
+        ctx.beginPath();
+        ctx.arc(this.lastAttackTarget.x, this.lastAttackTarget.y, 2.5 + 1.5 * (1 - opacity), 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'tank': {
+        const radius = 5 + 4 * (1 - opacity);
+        ctx.strokeStyle = `rgba(210, 120, 80, ${0.7 * opacity})`;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(this.lastAttackTarget.x, this.lastAttackTarget.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 0.3 * opacity;
+        ctx.fillStyle = '#D87448';
+        ctx.beginPath();
+        ctx.arc(this.lastAttackTarget.x, this.lastAttackTarget.y, radius * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'priest': {
+        ctx.strokeStyle = `rgba(200, 170, 255, ${0.75 * opacity})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(origin.x, origin.y);
+        ctx.lineTo(this.lastAttackTarget.x, this.lastAttackTarget.y);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.45 * opacity;
+        ctx.fillStyle = '#E6D8FF';
+        ctx.beginPath();
+        ctx.arc(this.lastAttackTarget.x, this.lastAttackTarget.y, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+    }
+    ctx.restore();
   }
 
   private pickNewDirection(): void {

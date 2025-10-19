@@ -23,7 +23,7 @@ export const KNIGHT_SIZE = 6;
 export const KNIGHT_ACCEL = 0.5;
 export const KNIGHT_FRICTION = 0.9;
 export const KNIGHT_STOP_DISTANCE = 5;
-export const KNIGHT_HP = 3;
+export const KNIGHT_HP = 5;
 
 export const MELEE_RANGE = 40;
 export const ARC_WIDTH_DEG = 100;
@@ -32,7 +32,6 @@ export const SWING_COOLDOWN = 0.8;
 export const SWING_ARC_POINTS = 16;
 
 export const UNIT_WANDER_INTERVAL: [number, number] = [1.0, 3.0];
-export const UNIT_DAMAGE_COOLDOWN = 0.5;
 export const UNIT_DETECTION_LERP = 0.15;
 export const DETECTION_TINT_LERP = 0.22;
 
@@ -62,7 +61,11 @@ export const UNIT_STATS = {
     detectionRadius: 80,
     maxHp: 1,
     size: 4,
-    attackDamage: 1
+    attackDamage: 1.5,
+    attackRange: 10,
+    attackCooldown: 0.35,
+    attackVisualDuration: 0.2,
+    attackType: 'melee'
   },
   tank: {
     cost: 25,
@@ -71,7 +74,11 @@ export const UNIT_STATS = {
     detectionRadius: 60,
     maxHp: 3,
     size: 5,
-    attackDamage: 1.5
+    attackDamage: 2,
+    attackRange: 12,
+    attackCooldown: 1.2,
+    attackVisualDuration: 0.45,
+    attackType: 'melee'
   },
   priest: {
     cost: 20,
@@ -80,7 +87,11 @@ export const UNIT_STATS = {
     detectionRadius: 70,
     maxHp: 2,
     size: 4,
-    attackDamage: 1.2
+    attackDamage: 1,
+    attackRange: 80,
+    attackCooldown: 0.8,
+    attackVisualDuration: 0.3,
+    attackType: 'ranged'
   }
 } as const;
 
@@ -126,6 +137,7 @@ export const ROAD_EDGE_COLOR = 'rgba(200, 190, 150, 0.2)';
 export const VILLAGER_IDLE_COLOR = '#E8DBA9';
 export const VILLAGER_ALERT_COLOR = '#FFB86C';
 export const VILLAGER_FLEE_COLOR = '#FFA552';
+export const VILLAGER_HP = 3;
 
 export const CASTLE_COLOR_DEC = hexToRgb(CASTLE_COLOR);
 
