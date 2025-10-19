@@ -271,7 +271,7 @@ export class Game {
 
     for (const unit of this.units) {
       unit.update(dt, this.knight, this, this.world);
-      unit.attemptDamage(this.knight);
+      unit.tryAttack(this.knight, this.world);
     }
 
     this.units = this.units.filter((unit) => unit.alive);
