@@ -332,7 +332,6 @@ export class World {
       const radius = 60 + i * 10;
       const baseTreeCount = 12 + i * 4;
       const treeCount = baseTreeCount + Math.floor(rand() * 5);
-      const trees: Tree[] = [];
       for (let t = 0; t < treeCount; t++) {
         const angle = rand() * Math.PI * 2;
         const distance = Math.sqrt(rand()) * radius;
