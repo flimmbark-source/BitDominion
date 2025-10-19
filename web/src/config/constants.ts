@@ -22,7 +22,7 @@ export const SHIELD_FLASH_DURATION = 0.35;
 export const KNIGHT_SIZE = 6;
 export const KNIGHT_ACCEL = 0.3;
 export const KNIGHT_FRICTION = 0.96;
-export const KNIGHT_SPEED = 2.4;
+export const KNIGHT_SPEED = 0.6;
 export const KNIGHT_STOP_DISTANCE = 5;
 export const KNIGHT_HP = 5;
 
@@ -57,8 +57,8 @@ export const UNIT_COLORS = {
 export const UNIT_STATS = {
   scout: {
     cost: 10,
-    minSpeed: 1.0,
-    maxSpeed: 1.8,
+    minSpeed: 0.25,
+    maxSpeed: 0.45,
     detectionRadius: 80,
     maxHp: 1,
     size: 4,
@@ -70,8 +70,8 @@ export const UNIT_STATS = {
   },
   tank: {
     cost: 25,
-    minSpeed: 0.5,
-    maxSpeed: 0.9,
+    minSpeed: 0.125,
+    maxSpeed: 0.225,
     detectionRadius: 60,
     maxHp: 3,
     size: 5,
@@ -83,8 +83,8 @@ export const UNIT_STATS = {
   },
   priest: {
     cost: 20,
-    minSpeed: 0.8,
-    maxSpeed: 1.2,
+    minSpeed: 0.2,
+    maxSpeed: 0.3,
     detectionRadius: 70,
     maxHp: 2,
     size: 4,
@@ -172,7 +172,7 @@ export const VILLAGE_RADIUS = 70;
 export const VILLAGE_ALERT_RADIUS = 75;
 export const VILLAGE_FLEE_RADIUS = 90;
 export const VILLAGER_IDLE_RADIUS = 24;
-export const VILLAGER_SPEED = 32;
+export const VILLAGER_SPEED = 8;
 export const ROAD_WIDTH = 18;
 export const CHEST_OPEN_RADIUS = 14;
 export const LOS_DEBUG_TTL = 0.3;
