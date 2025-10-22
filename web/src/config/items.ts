@@ -1,4 +1,4 @@
-export type WeaponItemId = 'throwingKnife' | 'torch' | 'crossbowCharm' | 'smokeBombSatchel';
+export type WeaponItemId = 'steelSword' | 'throwingKnife' | 'torch' | 'crossbowCharm' | 'smokeBombSatchel';
 export type SupportItemId = 'scoutBoots' | 'hunterJerky';
 export type ItemId = WeaponItemId | SupportItemId;
 
@@ -20,6 +20,15 @@ export interface ItemDefinition {
 }
 
 export const ITEM_DEFINITIONS: Record<ItemId, ItemDefinition> = {
+  steelSword: {
+    id: 'steelSword',
+    name: 'Knightblade',
+    description: 'Tempered steel blade that enables sweeping melee arcs and prepares the knight for close combat mastery.',
+    cost: 0,
+    icon: '🗡️',
+    unique: true,
+    category: 'weapon'
+  },
   scoutBoots: {
     id: 'scoutBoots',
     name: 'Scout Boots',

@@ -6,24 +6,26 @@
 
 body {
   margin: 0;
-  min-height: 100vh;
+  height: 100vh;
   background-color: #111827;
   color: #e5e7eb;
   font-family: 'Inter', sans-serif;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
+  overflow: hidden;
 }
 
 #app {
   width: 100%;
-  max-width: 1200px;
-  padding: 24px 16px 32px;
+  max-width: 1100px;
+  height: 100%;
+  padding: 16px 18px 20px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .game-header {
@@ -54,18 +56,23 @@ body {
 }
 
 .game-shell {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
 }
 
 .game-container {
   position: relative;
-  flex: 1;
-  min-height: 640px;
-  background: rgba(17, 24, 39, 0.8);
+  background: rgba(17, 24, 39, 0.82);
   border-radius: 14px;
   overflow: hidden;
+  min-height: 0;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.55);
+  width: min(640px, calc(100% - 32px));
+  height: min(640px, calc(100% - 32px));
+  margin: 0 auto;
 }
 
 .game-canvas {
@@ -87,7 +94,7 @@ body {
   position: absolute;
   top: 16px;
   right: 16px;
-  width: 260px;
+  width: 240px;
   padding: 12px 14px;
   text-align: right;
   z-index: 20;
@@ -128,7 +135,7 @@ body {
   left: 16px;
   bottom: 16px;
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: flex-end;
   z-index: 10;
 }
@@ -139,6 +146,35 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.build-toggle {
+  padding: 10px 12px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+
+.build-toggle-header {
+  font-family: 'MedievalSharp', cursive;
+  font-size: 16px;
+  color: #fbbf24;
+}
+
+.build-toggle-summary {
+  font-size: 13px;
+  color: #e5e7eb;
+}
+
+.build-toggle.build-active {
+  border-color: #fbbf24;
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.35);
+}
+
+.build-toggle.build-unaffordable {
+  border-color: #7f1d1d;
 }
 
 .stat-row {
@@ -209,27 +245,28 @@ body {
   width: 48px;
   height: 48px;
   border: 1px solid #7a5c4b;
-  background: #2a1a0a;
+  background: #1f150a;
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
-  transition: border-color 0.15s ease-out, background 0.15s ease-out;
+  transition: border-color 0.15s ease-out, background 0.15s ease-out, box-shadow 0.2s ease-out;
 }
 
-.inventory-slot.selected {
-  border-color: #fbbf24;
-  box-shadow: 0 0 10px rgba(251, 191, 36, 0.45);
+.inventory-slot.has-item {
+  background: #2a1a0a;
 }
 
-.inventory-slot.available {
-  cursor: pointer;
+.inventory-slot.item-evolved {
+  border-color: #34d399;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.35);
 }
 
-.inventory-slot.available:hover {
-  border-color: #d4af37;
-  background: #3c2a1a;
+.inventory-slot.empty {
+  border-style: dashed;
+  border-color: rgba(122, 92, 75, 0.6);
+  background: rgba(31, 21, 10, 0.6);
 }
 
 .inventory-slot .item-icon {
@@ -306,6 +343,34 @@ body {
   padding: 6px 2px;
 }
 
+.quest-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.quest-action-button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #7a5c4b;
+  background: rgba(75, 56, 42, 0.9);
+  color: #f3f4f6;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s ease-out, transform 0.15s ease-out;
+}
+
+.quest-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.quest-action-button:not(:disabled):hover {
+  background: rgba(107, 79, 58, 0.95);
+  transform: translateY(-1px);
+}
+
 .activities {
   display: flex;
   flex-direction: column;
@@ -369,6 +434,19 @@ body {
 .activity-item.completed {
   border-color: #34d399;
   background: rgba(17, 24, 20, 0.85);
+}
+
+.quest-giver.offering {
+  border-color: #7a5c4b;
+}
+
+.quest-giver.turnIn {
+  border-color: #34d399;
+  background: rgba(17, 24, 20, 0.85);
+}
+
+.quest-giver.turnIn .activity-title {
+  color: #bbf7d0;
 }
 
 .activity-icon {
@@ -596,13 +674,14 @@ body {
 
 @media (max-width: 900px) {
   #app {
-    padding: 16px 10px 24px;
+    padding: 12px 10px 16px;
   }
   .game-container {
-    min-height: 520px;
+    width: min(560px, calc(100% - 24px));
+    height: min(560px, calc(100% - 24px));
   }
   .dark-energy {
-    width: 220px;
+    width: 200px;
   }
   .hud .stats-panel {
     width: 200px;

@@ -38,6 +38,8 @@ export class Knight {
   private bowRange = KNIGHT_BOW_RANGE;
   private speedMultiplier = 1;
   private temporarySpeedMultiplier = 1;
+  private meleeEquipped = false;
+  private meleeDamage = 1;
 
   setTarget(target: Vector2): void {
     this.target.copy(target);
@@ -94,6 +96,9 @@ export class Knight {
   }
 
   tryAttack(units: DarkUnit[]): DarkUnit[] {
+    if (!this.meleeEquipped) {
+      return [];
+    }
     if (this.swingTimer > 0) {
       return this.collectHits(units);
     }
@@ -196,7 +201,7 @@ export class Knight {
   }
 
   drawSwing(ctx: CanvasRenderingContext2D): void {
-    if (this.swingTimer <= 0 || this.swingAngle == null) {
+    if (!this.meleeEquipped || this.swingTimer <= 0 || this.swingAngle == null) {
       return;
     }
     const radius = MELEE_RANGE;
@@ -260,7 +265,7 @@ export class Knight {
   }
 
   private collectHits(units: DarkUnit[]): DarkUnit[] {
-    if (this.swingAngle == null) {
+    if (!this.meleeEquipped || this.swingAngle == null) {
       return [];
     }
     const hits: DarkUnit[] = [];
@@ -293,6 +298,23 @@ export class Knight {
     }
     this.lastSwingProgress = Math.max(this.lastSwingProgress, easedProgress);
     return hits;
+  }
+
+  equipMeleeWeapon(damage = 1): void {
+    this.meleeEquipped = true;
+    this.meleeDamage = Math.max(0.1, damage);
+  }
+
+  hasMeleeWeapon(): boolean {
+    return this.meleeEquipped;
+  }
+
+  getMeleeDamage(multiplier = 1): number {
+    if (!this.meleeEquipped) {
+      return 0;
+    }
+    const base = this.meleeDamage * multiplier;
+    return Number.isFinite(base) && base > 0 ? base : 0;
   }
 
 }

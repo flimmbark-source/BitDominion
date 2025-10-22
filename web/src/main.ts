@@ -41,6 +41,7 @@ const INVENTORY_SLOTS = 6;
 const INITIAL_CAMERA_ZOOM = 1.25;
 const MIN_CAMERA_ZOOM = 0.75;
 const MAX_CAMERA_ZOOM = 2.5;
+const CAMERA_PAN_SPEED = 240;
 
 const appRoot = document.querySelector<HTMLDivElement>('#app');
 if (!appRoot) {
@@ -94,6 +95,10 @@ appRoot.innerHTML = `
             </div>
             <span class="health-text" id="heroHealthText">${KNIGHT_HP}/${KNIGHT_HP}</span>
           </div>
+        </div>
+        <div class="ui-panel build-toggle" id="buildPrompt">
+          <div class="build-toggle-header">Build Mode (B)</div>
+          <div class="build-toggle-summary">Current plan: <span id="buildSelectedLabel">Workshop ledger closed</span></div>
         </div>
         <div class="ui-panel inventory" id="inventoryPanel"></div>
         <div class="ui-panel hero-items" id="heroItemsPanel">
@@ -168,6 +173,37 @@ function clampCamera() {
   }
 }
 
+const cameraPan = { up: false, down: false, left: false, right: false };
+
+function updateCameraPosition(dt: number): void {
+  let dx = 0;
+  let dy = 0;
+  if (cameraPan.left) {
+    dx -= 1;
+  }
+  if (cameraPan.right) {
+    dx += 1;
+  }
+  if (cameraPan.up) {
+    dy -= 1;
+  }
+  if (cameraPan.down) {
+    dy += 1;
+  }
+  if (dx === 0 && dy === 0) {
+    return;
+  }
+  const length = Math.hypot(dx, dy);
+  if (length > 0) {
+    dx /= length;
+    dy /= length;
+  }
+  const speed = CAMERA_PAN_SPEED / camera.zoom;
+  camera.center.x += dx * speed * dt;
+  camera.center.y += dy * speed * dt;
+  clampCamera();
+}
+
 clampCamera();
 
 const game = new Game();
@@ -179,6 +215,8 @@ const heroGoldText = requireElement<HTMLSpanElement>('#heroGoldText');
 const heroShardText = requireElement<HTMLSpanElement>('#heroShardText');
 const heroHealthBar = requireElement<HTMLDivElement>('#heroHealthBar');
 const heroHealthText = requireElement<HTMLSpanElement>('#heroHealthText');
+const buildPrompt = requireElement<HTMLDivElement>('#buildPrompt');
+const buildSelectedLabel = requireElement<HTMLSpanElement>('#buildSelectedLabel');
 const darkEnergyFill = requireElement<HTMLDivElement>('#darkEnergyFill');
 const darkEnergyText = requireElement<HTMLParagraphElement>('#darkEnergyText');
 const heroItemsContainer = requireElement<HTMLDivElement>('#heroItemsContainer');
@@ -201,7 +239,7 @@ const resetButton = requireElement<HTMLButtonElement>('#resetButton');
 const inventorySlots: HTMLDivElement[] = [];
 for (let i = 0; i < INVENTORY_SLOTS; i++) {
   const slot = document.createElement('div');
-  slot.className = 'inventory-slot';
+  slot.className = 'inventory-slot empty';
   inventoryPanel.appendChild(slot);
   inventorySlots.push(slot);
 }
@@ -240,34 +278,26 @@ document.addEventListener('pointermove', (event) => {
 });
 
 function updateInventory() {
-  const order = game.getBuildOrder();
-  const selectedIndex = game.getSelectedBlueprintIndex();
+  const loadout = game.getHeroLoadout();
   for (let i = 0; i < inventorySlots.length; i++) {
     const slot = inventorySlots[i];
-    const type = order[i];
-    if (type) {
-      const info = BUILDING_DISPLAY[type];
-      slot.innerHTML = `<div class="item-icon">${info.icon}</div>`;
-      slot.classList.add('available');
-      slot.classList.toggle('selected', i === selectedIndex);
-      slot.onclick = () => {
-        game.selectBlueprint(i);
-        updateInventory();
-        updateBuildingShopButtons();
-        setItemShopOpen(false);
-        if (!game.isBuildModeActive()) {
-          game.setBuildMode(true);
-        }
-      };
-      slot.onmouseenter = () => showTooltip(info.name, info.description);
+    const entry = loadout[i];
+    if (entry) {
+      slot.innerHTML = `<div class="item-icon">${entry.icon}</div>`;
+      slot.classList.add('has-item');
+      slot.classList.remove('empty');
+      slot.classList.toggle('item-evolved', entry.evolved);
+      slot.onmouseenter = () =>
+        showTooltip(entry.name, `${entry.description}<br /><em>${entry.status}</em>`);
       slot.onmouseleave = hideTooltip;
     } else {
       slot.innerHTML = '';
-      slot.classList.remove('available', 'selected');
-      slot.onclick = null;
+      slot.classList.remove('has-item', 'item-evolved');
+      slot.classList.add('empty');
       slot.onmouseenter = null;
       slot.onmouseleave = null;
     }
+    slot.onclick = null;
   }
 }
 
@@ -292,6 +322,7 @@ function populateBuildingShop() {
         game.setBuildMode(true);
         updateInventory();
         updateBuildingShopButtons();
+        updateBuildPrompt();
       }
     });
     button.addEventListener('mouseenter', () =>
@@ -314,6 +345,23 @@ function updateBuildingShopButtons() {
   }
   buildingShopPanel.classList.toggle('hidden', !game.isBuildModeActive());
   workshopButton.classList.toggle('selected', game.isBuildModeActive());
+  updateBuildPrompt();
+}
+
+function updateBuildPrompt(): void {
+  const selected = game.getSelectedBlueprint();
+  const info = BUILDING_DISPLAY[selected];
+  if (!info) {
+    buildSelectedLabel.textContent = 'Workshop ledger closed';
+    buildPrompt.classList.remove('build-active', 'build-unaffordable');
+    return;
+  }
+  const definition = getBuildingDefinition(selected);
+  const affordable = game.canAffordBlueprint(selected);
+  const summary = `${info.icon} ${info.name} — ${definition.cost} supplies`;
+  buildSelectedLabel.textContent = affordable ? summary : `${summary} (need supplies)`;
+  buildPrompt.classList.toggle('build-active', game.isBuildModeActive());
+  buildPrompt.classList.toggle('build-unaffordable', !affordable);
 }
 
 let isItemShopOpen = false;
@@ -423,30 +471,92 @@ function renderActivities(): void {
 }
 
 function renderQuests(): void {
-  const quests = game.getQuests();
+  const givers = game.getQuestGivers();
   questList.innerHTML = '';
-  if (!quests.length) {
+  if (!givers.length) {
     const empty = document.createElement('li');
     empty.className = 'activity-empty';
-    empty.textContent = 'No quests available.';
+    empty.textContent = 'No villages require aid.';
     questList.appendChild(empty);
     return;
   }
-  for (const quest of quests) {
+  const isDowntime = game.isDowntime();
+  for (const giver of givers) {
     const li = document.createElement('li');
-    li.className = `activity-item ${quest.state}`;
-    const progressRatio = quest.requiredTime > 0 ? Math.min(1, quest.progress / quest.requiredTime) : 0;
-    const rewardText = quest.state === 'completed'
-      ? 'Completed'
-      : `${quest.reward.supplies} gold • ${quest.reward.description}`;
-    li.innerHTML = `
-      <span class="activity-icon">${quest.icon}</span>
-      <div class="activity-body">
-        <div class="activity-title">${quest.description}</div>
-        <div class="activity-subtext">${rewardText}</div>
-        <div class="activity-progress"><span style="width:${progressRatio * 100}%"></span></div>
-      </div>
-    `;
+    li.className = `activity-item quest-giver ${giver.state}`;
+    const icon = document.createElement('span');
+    icon.className = 'activity-icon';
+    icon.textContent = '📜';
+    li.appendChild(icon);
+
+    const body = document.createElement('div');
+    body.className = 'activity-body';
+    const title = document.createElement('div');
+    title.className = 'activity-title';
+    title.textContent = `${giver.name} — ${giver.villageName}`;
+    body.appendChild(title);
+    const dialog = document.createElement('div');
+    dialog.className = 'activity-subtext';
+    dialog.textContent = giver.dialog;
+    body.appendChild(dialog);
+
+    if (giver.offer) {
+      const offer = document.createElement('div');
+      offer.className = 'activity-subtext';
+      offer.textContent = giver.offer.rewardText;
+      body.appendChild(offer);
+    }
+
+    if (giver.activeQuest) {
+      const questInfo = document.createElement('div');
+      questInfo.className = 'activity-subtext';
+      questInfo.textContent = giver.activeQuest.rewardText;
+      body.appendChild(questInfo);
+      const ratio = giver.activeQuest.requiredTime > 0
+        ? Math.min(1, giver.activeQuest.progress / giver.activeQuest.requiredTime)
+        : 0;
+      const progress = document.createElement('div');
+      progress.className = 'activity-progress';
+      const bar = document.createElement('span');
+      bar.style.width = `${ratio * 100}%`;
+      progress.appendChild(bar);
+      body.appendChild(progress);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'quest-actions';
+    let actionButton: HTMLButtonElement | null = null;
+    if (giver.state === 'offering') {
+      actionButton = document.createElement('button');
+      actionButton.className = 'quest-action-button';
+      actionButton.textContent = isDowntime ? 'Accept Quest' : 'Return in downtime';
+      actionButton.disabled = !isDowntime;
+      actionButton.addEventListener('click', () => {
+        if (game.acceptQuestFromGiver(giver.id)) {
+          updateInventory();
+          renderActivities();
+        }
+      });
+    } else if (giver.state === 'turnIn') {
+      actionButton = document.createElement('button');
+      actionButton.className = 'quest-action-button';
+      actionButton.textContent = 'Turn In';
+      actionButton.addEventListener('click', () => {
+        if (game.turnInQuestFromGiver(giver.id)) {
+          updateHeroItems(true);
+          renderActivities();
+        }
+      });
+    }
+
+    if (actionButton) {
+      actions.appendChild(actionButton);
+    }
+    if (actions.childElementCount > 0) {
+      body.appendChild(actions);
+    }
+
+    li.appendChild(body);
     questList.appendChild(li);
   }
 }
@@ -578,10 +688,27 @@ canvas.addEventListener('contextmenu', (event) => {
   event.preventDefault();
 });
 
+buildPrompt.addEventListener('click', () => {
+  setItemShopOpen(false);
+  game.toggleBuildMode();
+  updateBuildingShopButtons();
+  updateBuildPrompt();
+});
+
+buildPrompt.addEventListener('mouseenter', () => {
+  const blueprint = game.getSelectedBlueprint();
+  const info = BUILDING_DISPLAY[blueprint];
+  const definition = getBuildingDefinition(blueprint);
+  showTooltip(info.name, `${info.description}<br />Cost: ${definition.cost} supplies.`);
+});
+
+buildPrompt.addEventListener('mouseleave', hideTooltip);
+
 workshopButton.addEventListener('click', () => {
   setItemShopOpen(false);
   game.toggleBuildMode();
   updateBuildingShopButtons();
+  updateBuildPrompt();
 });
 
 arsenalButton.addEventListener('click', () => {
@@ -610,6 +737,7 @@ window.addEventListener('keydown', (event) => {
   }
 
   const key = event.key.toLowerCase();
+  const code = event.code;
   if (key === 'r') {
     game.reset();
     game.setCanvasHudEnabled(false);
@@ -623,18 +751,51 @@ window.addEventListener('keydown', (event) => {
     setItemShopOpen(false);
     game.toggleBuildMode();
     updateBuildingShopButtons();
+    updateBuildPrompt();
   } else if (key === 'i') {
     event.preventDefault();
     setItemShopOpen(!isItemShopOpen);
   } else if (key === 'c') {
     game.toggleCanopy();
-  } else if (key >= '1' && key <= '5') {
-    game.selectBlueprint(Number(key) - 1);
-    updateInventory();
-    updateBuildingShopButtons();
-    setItemShopOpen(false);
+  } else if (code === 'Space') {
+    event.preventDefault();
+    const { x, y } = game.knight.pos;
+    camera.center.x = x;
+    camera.center.y = y;
+    clampCamera();
+  } else if (code === 'KeyW') {
+    event.preventDefault();
+    cameraPan.up = true;
+  } else if (code === 'KeyS') {
+    event.preventDefault();
+    cameraPan.down = true;
+  } else if (code === 'KeyA') {
+    event.preventDefault();
+    cameraPan.left = true;
+  } else if (code === 'KeyD') {
+    event.preventDefault();
+    cameraPan.right = true;
   } else if (key === 'x') {
     game.startDismantle();
+  }
+});
+
+window.addEventListener('keyup', (event) => {
+  switch (event.code) {
+    case 'KeyW':
+      cameraPan.up = false;
+      break;
+    case 'KeyS':
+      cameraPan.down = false;
+      break;
+    case 'KeyA':
+      cameraPan.left = false;
+      break;
+    case 'KeyD':
+      cameraPan.right = false;
+      break;
+    default:
+      break;
   }
 });
 
@@ -696,6 +857,7 @@ let lastTime = performance.now();
 function frame(now: number) {
   const dt = Math.min((now - lastTime) / 1000, 0.2);
   lastTime = now;
+  updateCameraPosition(dt);
   game.update(dt);
   const cameraState: CameraState = {
     center: camera.center,

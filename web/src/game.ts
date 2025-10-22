@@ -73,7 +73,6 @@ import {
   HUT_STEER_STRENGTH,
   DOWNTIME_DURATION,
   WAVE_DURATION,
-  QUEST_COUNT,
   QUEST_RADIUS,
   QUEST_COMPLETION_TIME,
   QUEST_REWARD_SUPPLIES,
@@ -84,6 +83,8 @@ import {
   CREEP_REWARD_SUPPLIES,
   CREEP_REWARD_RELIC_SHARDS,
   CREEP_UNIT_TYPES,
+  MONSTER_LAIR_RADIUS,
+  MONSTER_LAIR_VILLAGE_BUFFER,
   TEMP_BUFF_WAVE_DURATION,
   THROWING_KNIFE_COOLDOWN,
   THROWING_KNIFE_RANGE,
@@ -180,12 +181,13 @@ interface QuestReward {
 
 interface Quest {
   id: number;
+  giverId: number;
   type: QuestType;
   position: Vector2;
   radius: number;
   requiredTime: number;
   progress: number;
-  state: 'available' | 'completed';
+  state: 'available' | 'active' | 'completed';
   description: string;
   icon: string;
   reward: QuestReward;
@@ -208,6 +210,34 @@ interface TemporaryBuff {
   damageBonus?: number;
   speedBonus?: number;
   expiresAtWave: number;
+}
+
+interface QuestGiver {
+  id: number;
+  villageIndex: number;
+  position: Vector2;
+  name: string;
+  villageName: string;
+  greeting: string;
+  questOffer: Quest | null;
+  activeQuestId: number | null;
+}
+
+export interface QuestGiverStatus {
+  id: number;
+  name: string;
+  villageName: string;
+  dialog: string;
+  state: 'offering' | 'active' | 'turnIn' | 'waiting';
+  offer: { description: string; icon: string; rewardText: string } | null;
+  activeQuest: {
+    id: number;
+    description: string;
+    icon: string;
+    progress: number;
+    requiredTime: number;
+    rewardText: string;
+  } | null;
 }
 
 interface WeaponRuntimeState {
@@ -277,8 +307,10 @@ export class Game {
   private waveIndex = 0;
   private quests: Quest[] = [];
   private creepCamps: CreepCamp[] = [];
+  private questGivers: QuestGiver[] = [];
   private questIdCounter = 1;
   private creepCampIdCounter = 1;
+  private questGiverIdCounter = 1;
   private temporaryBuffs: TemporaryBuff[] = [];
   private weaponDamageBonus = 0;
   private temporarySpeedBonus = 0;
@@ -299,6 +331,7 @@ export class Game {
     this.seals = this._generateSeals();
     this.shieldWasActive = this._isShieldActive();
     this.world.setBuildingObstacles([]);
+    this._initializeQuestGivers();
     this._initializeKnightLoadout();
     this._enterDowntime();
   }
@@ -329,6 +362,7 @@ export class Game {
     this.hasWorkshopTech = false;
     this.projectileIdCounter = 1;
     this.knightProjectileIdCounter = 1;
+    this._initializeQuestGivers();
     this._initializeKnightLoadout();
     this.shieldWasActive = this._isShieldActive();
     this.shieldFlashTimer = 0;
@@ -412,6 +446,80 @@ export class Game {
 
   getQuests(): readonly Quest[] {
     return this.quests;
+  }
+
+  getQuestGivers(): QuestGiverStatus[] {
+    return this.questGivers.map((giver) => {
+      const { state, activeQuest } = this._resolveQuestGiverState(giver);
+      const rewardText = (quest: Quest) => `${quest.reward.supplies} gold • ${quest.reward.description}`;
+      return {
+        id: giver.id,
+        name: giver.name,
+        villageName: giver.villageName,
+        dialog: giver.greeting,
+        state,
+        offer: giver.questOffer
+          ? {
+              description: giver.questOffer.description,
+              icon: giver.questOffer.icon,
+              rewardText: rewardText(giver.questOffer)
+            }
+          : null,
+        activeQuest: activeQuest
+          ? {
+              id: activeQuest.id,
+              description: activeQuest.description,
+              icon: activeQuest.icon,
+              progress: activeQuest.progress,
+              requiredTime: activeQuest.requiredTime,
+              rewardText: rewardText(activeQuest)
+            }
+          : null
+      };
+    });
+  }
+
+  acceptQuestFromGiver(giverId: number): boolean {
+    if (!this.isDowntime()) {
+      return false;
+    }
+    const giver = this.questGivers.find((candidate) => candidate.id === giverId);
+    if (!giver || giver.activeQuestId != null || !giver.questOffer) {
+      return false;
+    }
+    const quest = giver.questOffer;
+    quest.state = 'active';
+    quest.progress = 0;
+    this.quests.push(quest);
+    giver.activeQuestId = quest.id;
+    giver.questOffer = null;
+    return true;
+  }
+
+  turnInQuestFromGiver(giverId: number): boolean {
+    const giver = this.questGivers.find((candidate) => candidate.id === giverId);
+    if (!giver || giver.activeQuestId == null) {
+      return false;
+    }
+    const questIndex = this.quests.findIndex((quest) => quest.id === giver.activeQuestId);
+    if (questIndex < 0) {
+      giver.activeQuestId = null;
+      return false;
+    }
+    const quest = this.quests[questIndex];
+    if (quest.state !== 'completed') {
+      return false;
+    }
+    this._addSupplies(quest.reward.supplies);
+    if (quest.reward.buff) {
+      this._addTemporaryBuff(quest.reward.buff);
+    }
+    this.rescueCount += 1;
+    this._recordRescueProgress(1 + this.rescueMasteryBonus);
+    this.quests.splice(questIndex, 1);
+    giver.activeQuestId = null;
+    giver.questOffer = this._createQuestForVillage(giver.id, giver.villageIndex);
+    return true;
   }
 
   getCreepCamps(): readonly CreepCamp[] {
@@ -517,7 +625,12 @@ export class Game {
   spawnUnit(
     type: UnitType,
     position: Vector2,
-    options?: { allegiance?: DarkUnitAllegiance; ignorePhase?: boolean }
+    options?: {
+      allegiance?: DarkUnitAllegiance;
+      ignorePhase?: boolean;
+      lairCenter?: Vector2;
+      lairRadius?: number;
+    }
   ): DarkUnit | null {
     const allegiance = options?.allegiance ?? 'dark';
     if (allegiance === 'dark') {
@@ -531,7 +644,11 @@ export class Game {
     const half = UNIT_STATS[type].size / 2;
     const spawnSource = allegiance === 'dark' ? this.getCastleEdgePoint(position) : position.clone();
     const clamped = spawnSource.clamp(half, half, WIDTH - half, HEIGHT - half);
-    const unit = new DarkUnit(clamped, type, this.unitIdCounter++, allegiance);
+    const unit = new DarkUnit(clamped, type, this.unitIdCounter++, allegiance, {
+      allegiance,
+      lairCenter: options?.lairCenter,
+      lairRadius: options?.lairRadius
+    });
     this.units.push(unit);
     this.unitLookup.set(unit.id, unit);
     return unit;
@@ -819,20 +936,23 @@ export class Game {
 
     const hits = this.knight.tryAttack(this.units);
     if (hits.length) {
-      let kills = 0;
-      for (const unit of hits) {
-        const wasAlive = unit.alive;
-        const died = unit.receiveArcHit(this.knight);
-        if (wasAlive && died) {
-          kills += 1;
-          this._onUnitKilled(unit);
+      const meleeDamage = this.knight.getMeleeDamage(1 + this.weaponDamageBonus);
+      if (meleeDamage > 0) {
+        let kills = 0;
+        for (const unit of hits) {
+          const wasAlive = unit.alive;
+          const died = unit.receiveArcHit(this.knight, meleeDamage);
+          if (wasAlive && died) {
+            kills += 1;
+            this._onUnitKilled(unit);
+          }
         }
+        if (kills > 0) {
+          this._emitNoise(this.knight.pos, NOISE_ATTACK_STRENGTH);
+        }
+        this.units = this.units.filter((unit) => unit.alive);
+        this._syncUnitLookup();
       }
-      if (kills > 0) {
-        this._emitNoise(this.knight.pos, NOISE_ATTACK_STRENGTH);
-      }
-      this.units = this.units.filter((unit) => unit.alive);
-      this._syncUnitLookup();
     }
 
     this.darkLord.update(dt, this);
@@ -881,6 +1001,7 @@ export class Game {
 
     this.world.drawCanopy(ctx);
     this.world.drawVillageAlarms(ctx);
+    this._drawQuestGivers(ctx);
     this._drawNoisePings(ctx);
     this._drawBuildPreview(ctx);
 
@@ -916,7 +1037,6 @@ export class Game {
     this.phase = 'wave';
     this.phaseTimer = WAVE_DURATION;
     this.waveIndex += 1;
-    this.quests = [];
     this.creepCamps = [];
     this.weaponOrbitVisuals = [];
     this.smokeFields = [];
@@ -941,34 +1061,98 @@ export class Game {
   }
 
   private _generateDowntimeActivities(): void {
-    this.quests = this._createQuests();
+    this._refreshQuestOffers();
     this.creepCamps = this._createCreepCamps();
   }
 
-  private _createQuests(): Quest[] {
-    const quests: Quest[] = [];
-    for (let i = 0; i < QUEST_COUNT; i++) {
-      const type: QuestType = i % 2 === 0 ? 'escort' : 'retrieve';
-      const questId = this.questIdCounter++;
-      const position = this._chooseQuestLocation(type, i);
-      const reward = this._createQuestReward(type, questId);
-      quests.push({
-        id: questId,
-        type,
-        position,
-        radius: QUEST_RADIUS,
-        requiredTime: QUEST_COMPLETION_TIME,
-        progress: 0,
-        state: 'available',
-        description:
-          type === 'escort'
-            ? 'Escort the villagers back toward the sanctuary to earn their blessing.'
-            : 'Recover relic shards from the forest shrine before the next assault.',
-        icon: type === 'escort' ? '🛡️' : '🔮',
-        reward
-      });
+  private _createQuestForVillage(giverId: number, villageIndex: number): Quest {
+    const type: QuestType = Math.random() < 0.5 ? 'escort' : 'retrieve';
+    const questId = this.questIdCounter++;
+    const position = this._chooseQuestLocation(type, villageIndex);
+    const reward = this._createQuestReward(type, questId);
+    const description =
+      type === 'escort'
+        ? 'Escort the villagers safely back toward the sanctuary.'
+        : 'Recover relic shards from the forest shrine before the next assault.';
+    const icon = type === 'escort' ? '🛡️' : '🔮';
+    return {
+      id: questId,
+      giverId,
+      type,
+      position,
+      radius: QUEST_RADIUS,
+      requiredTime: QUEST_COMPLETION_TIME,
+      progress: 0,
+      state: 'available',
+      description,
+      icon,
+      reward
+    };
+  }
+
+  private _refreshQuestOffers(): void {
+    if (!this.questGivers.length) {
+      return;
     }
-    return quests;
+    for (const giver of this.questGivers) {
+      if (giver.activeQuestId != null) {
+        const activeQuest = this.quests.find((quest) => quest.id === giver.activeQuestId) ?? null;
+        if (!activeQuest) {
+          giver.activeQuestId = null;
+        }
+      }
+      if (giver.activeQuestId != null) {
+        continue;
+      }
+      if (!giver.questOffer) {
+        giver.questOffer = this._createQuestForVillage(giver.id, giver.villageIndex);
+      }
+    }
+  }
+
+  private _resolveQuestGiverState(giver: QuestGiver): {
+    state: QuestGiverStatus['state'];
+    activeQuest: Quest | null;
+  } {
+    const activeQuest =
+      giver.activeQuestId != null
+        ? this.quests.find((quest) => quest.id === giver.activeQuestId) ?? null
+        : null;
+    if (activeQuest) {
+      return {
+        state: activeQuest.state === 'completed' ? 'turnIn' : 'active',
+        activeQuest
+      };
+    }
+    return { state: giver.questOffer ? 'offering' : 'waiting', activeQuest: null };
+  }
+
+  private _drawQuestGivers(ctx: CanvasRenderingContext2D): void {
+    if (!this.questGivers.length) {
+      return;
+    }
+    ctx.save();
+    ctx.font = '12px Inter';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const giver of this.questGivers) {
+      const { state } = this._resolveQuestGiverState(giver);
+      let fill = '#9ca3af';
+      if (state === 'offering') {
+        fill = '#fbbf24';
+      } else if (state === 'active') {
+        fill = '#60a5fa';
+      } else if (state === 'turnIn') {
+        fill = '#34d399';
+      }
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.arc(giver.position.x, giver.position.y - 18, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('📜', giver.position.x, giver.position.y - 18);
+    }
+    ctx.restore();
   }
 
   private _chooseQuestLocation(type: QuestType, index: number): Vector2 {
@@ -1020,7 +1204,7 @@ export class Game {
     for (let i = 0; i < CREEP_CAMPS_PER_DOWNTIME; i++) {
       const campId = this.creepCampIdCounter++;
       const position = this._randomEncounterPoint();
-      const radius = 52;
+      const radius = MONSTER_LAIR_RADIUS;
       const packSize = Math.floor(
         CREEP_PACK_SIZE[0] + Math.random() * (CREEP_PACK_SIZE[1] - CREEP_PACK_SIZE[0] + 1)
       );
@@ -1032,7 +1216,12 @@ export class Game {
           .clone()
           .add(new Vector2(Math.cos(angle) * distance, Math.sin(angle) * distance));
         const type = CREEP_UNIT_TYPES[Math.floor(Math.random() * CREEP_UNIT_TYPES.length)];
-        const unit = this.spawnUnit(type, spawnPos, { allegiance: 'wild', ignorePhase: true });
+        const unit = this.spawnUnit(type, spawnPos, {
+          allegiance: 'wild',
+          ignorePhase: true,
+          lairCenter: position,
+          lairRadius: radius
+        });
         if (unit) {
           unitIds.push(unit.id);
         }
@@ -1071,7 +1260,7 @@ export class Game {
       return;
     }
     for (const quest of this.quests) {
-      if (quest.state === 'completed') {
+      if (quest.state !== 'active') {
         continue;
       }
       const distance = quest.position.distanceTo(this.knight.pos);
@@ -1087,17 +1276,11 @@ export class Game {
   }
 
   private _completeQuest(quest: Quest): void {
-    if (quest.state === 'completed') {
+    if (quest.state !== 'active') {
       return;
     }
     quest.state = 'completed';
     quest.progress = quest.requiredTime;
-    this._addSupplies(quest.reward.supplies);
-    if (quest.reward.buff) {
-      this._addTemporaryBuff(quest.reward.buff);
-    }
-    this.rescueCount += 1;
-    this._recordRescueProgress(1 + this.rescueMasteryBonus);
   }
 
   private _recordRescueProgress(amount: number): void {
@@ -1364,12 +1547,23 @@ export class Game {
 
   private _randomEncounterPoint(): Vector2 {
     const margin = 70;
+    const villages = this.world.getVillages();
     for (let attempt = 0; attempt < 20; attempt++) {
       const point = new Vector2(
         margin + Math.random() * (WIDTH - margin * 2),
         margin + Math.random() * (HEIGHT - margin * 2)
       );
       if (point.distanceTo(CASTLE_POS) < 120) {
+        continue;
+      }
+      let nearVillage = false;
+      for (const village of villages) {
+        if (point.distanceTo(village.center) < MONSTER_LAIR_VILLAGE_BUFFER) {
+          nearVillage = true;
+          break;
+        }
+      }
+      if (nearVillage) {
         continue;
       }
       if (point.distanceTo(this.knight.pos) < 80) {
@@ -1870,6 +2064,31 @@ export class Game {
     this.world.setBuildingObstacles(obstacles);
   }
 
+  private _initializeQuestGivers(): void {
+    this.questGivers = [];
+    this.questGiverIdCounter = 1;
+    const villages = this.world.getVillages();
+    const namePool = ['Rowan', 'Elara', 'Thorne', 'Maris', 'Galen', 'Bryn'];
+    for (let i = 0; i < villages.length; i++) {
+      const village = villages[i];
+      const id = this.questGiverIdCounter++;
+      const name = `Elder ${namePool[i % namePool.length]}`;
+      const villageName = `Village ${i + 1}`;
+      const greeting = `The people of ${villageName} look to you for aid.`;
+      const quest = this._createQuestForVillage(id, i);
+      this.questGivers.push({
+        id,
+        villageIndex: i,
+        position: village.center.clone(),
+        name,
+        villageName,
+        greeting,
+        questOffer: quest,
+        activeQuestId: null
+      });
+    }
+  }
+
   private _initializeKnightLoadout(): void {
     this.ownedItems.clear();
     this.weaponStates.clear();
@@ -1881,7 +2100,7 @@ export class Game {
     this.knightProjectiles = [];
     this.knightProjectileIdCounter = 1;
     this.knight.setTemporarySpeedMultiplier(1);
-    this._grantItem('throwingKnife');
+    this._grantItem('steelSword');
   }
 
   private _grantItem(itemId: ItemId): void {
@@ -1911,6 +2130,9 @@ export class Game {
 
   private _applyItemEffect(itemId: ItemId): void {
     switch (itemId) {
+      case 'steelSword':
+        this.knight.equipMeleeWeapon();
+        break;
       case 'scoutBoots':
         this.knight.addSpeedMultiplier(KNIGHT_SPEED_BOOST_MULTIPLIER);
         this.rescueMasteryBonus += 1;
