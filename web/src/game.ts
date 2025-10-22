@@ -26,7 +26,6 @@ import {
   HP_BAR_WIDTH,
   HUD_COLOR,
   KNIGHT_BOW_NOISE,
-  KNIGHT_BOW_COOLDOWN_MULTIPLIER,
   KNIGHT_HP,
   KNIGHT_SIZE,
   KNIGHT_SPEED_BOOST_MULTIPLIER,
@@ -293,7 +292,6 @@ export class Game {
   private rescueCount = 0;
   private killMasteryBonus = 0;
   private rescueMasteryBonus = 0;
-  private cloakTimer = 0;
 
   constructor() {
     this.world = new World();
@@ -302,7 +300,7 @@ export class Game {
     this.shieldWasActive = this._isShieldActive();
     this.world.setBuildingObstacles([]);
     this._initializeKnightLoadout();
-    this._enterDowntime({ initial: true });
+    this._enterDowntime();
   }
 
   reset(): void {
@@ -357,8 +355,7 @@ export class Game {
     this.rescueCount = 0;
     this.killMasteryBonus = 0;
     this.rescueMasteryBonus = 0;
-    this.cloakTimer = 0;
-    this._enterDowntime({ initial: true });
+    this._enterDowntime();
   }
 
   setCanvasHudEnabled(enabled: boolean): void {
@@ -904,12 +901,11 @@ export class Game {
     }
   }
 
-  private _enterDowntime(options?: { initial?: boolean }): void {
+  private _enterDowntime(): void {
     this.phase = 'downtime';
     this.phaseTimer = DOWNTIME_DURATION;
     this.weaponOrbitVisuals = [];
     this.smokeFields = [];
-    this.cloakTimer = 0;
     this._generateDowntimeActivities();
   }
 
@@ -1417,7 +1413,7 @@ export class Game {
     return new Vector2(vector.x * cos - vector.y * sin, vector.x * sin + vector.y * cos);
   }
 
-  private _onUnitKilled(unit: DarkUnit): void {
+  private _onUnitKilled(_unit: DarkUnit): void {
     this.totalKills += 1;
     for (const state of this.weaponStates.values()) {
       state.kills += 1 + this.killMasteryBonus;
@@ -2230,30 +2226,34 @@ export class Game {
       }
       direction.scale(1 / speed);
       const distance = speed * dt;
-      const hit = this.world.raycastObstacles(projectile.position, direction, distance);
-      if (hit + 0.001 < distance) {
+      const obstacleDistance = this.world.raycastObstacles(
+        projectile.position,
+        direction,
+        distance,
+      );
+      if (obstacleDistance + 0.001 < distance) {
         continue;
       }
 
       projectile.position.add(direction.clone().scale(distance));
 
       const target = projectile.target;
-      let hit = false;
+      let didHit = false;
       if (
         target &&
         target.alive &&
         target.pos.distanceTo(projectile.position) <= target.getCollisionRadius() + 2.5
       ) {
         this._applyProjectileHit(projectile, target);
-        hit = true;
+        didHit = true;
       } else {
         const hitUnit = this._findKnightProjectileHit(projectile);
         if (hitUnit) {
           this._applyProjectileHit(projectile, hitUnit);
-          hit = true;
+          didHit = true;
         }
       }
-      if (hit) {
+      if (didHit) {
         if (projectile.pierce && projectile.pierce > 0) {
           projectile.pierce -= 1;
           survivors.push(projectile);
