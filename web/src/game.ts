@@ -84,6 +84,13 @@ import { Seal } from './entities/seal';
 import { Vector2 } from './math/vector2';
 import { World } from './world';
 
+export interface CameraState {
+  center: { x: number; y: number };
+  zoom: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
 export type GameState = 'running' | 'victory' | 'defeat';
 
 interface PatrolAnchor {
@@ -537,7 +544,19 @@ export class Game {
     this._updateVictory(dt);
   }
 
-  draw(ctx: CanvasRenderingContext2D): void {
+  draw(ctx: CanvasRenderingContext2D, camera: CameraState): void {
+    const { center, zoom, viewportWidth, viewportHeight } = camera;
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(viewportWidth / 2, viewportHeight / 2);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-center.x, -center.y);
+
     ctx.fillStyle = BACKGROUND_COLOR;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
@@ -567,6 +586,8 @@ export class Game {
     if (this.debugOverlay) {
       this._drawDebugOverlay(ctx);
     }
+
+    ctx.restore();
 
     if (this.canvasHudEnabled) {
       this._drawHud(ctx);
