@@ -7,6 +7,7 @@ import {
   BuildingType
 } from './config/constants';
 import { getBuildingDefinition } from './entities/building';
+import { ITEM_DEFINITIONS, ITEM_ORDER, ItemId } from './config/items';
 
 const BUILDING_DISPLAY: Record<BuildingType, { icon: string; name: string; description: string }> = {
   watchtower: {
@@ -62,6 +63,7 @@ appRoot.innerHTML = `
       </p>
       <div class="header-actions">
         <button class="header-button" id="workshopButton">Workshop (B)</button>
+        <button class="header-button" id="arsenalButton">Arsenal (I)</button>
         <button class="header-button" id="canopyButton">Toggle Canopy (C)</button>
         <button class="header-button" id="resetButton">Reset (R)</button>
       </div>
@@ -88,10 +90,18 @@ appRoot.innerHTML = `
           </div>
         </div>
         <div class="ui-panel inventory" id="inventoryPanel"></div>
+        <div class="ui-panel hero-items" id="heroItemsPanel">
+          <div class="hero-items-title">Hero Gear</div>
+          <div class="hero-items-grid" id="heroItemsContainer"></div>
+        </div>
       </div>
-      <div class="shop-panel ui-panel hidden" id="shopPanel">
+      <div class="shop-panel ui-panel hidden" id="buildingShopPanel">
         <h2>Workshop Ledger</h2>
         <div class="shop-items" id="shopItemsContainer"></div>
+      </div>
+      <div class="shop-panel ui-panel hidden" id="itemShopPanel">
+        <h2>Hero Arsenal</h2>
+        <div class="shop-items" id="itemShopItemsContainer"></div>
       </div>
       <div class="tooltip" id="tooltipPanel"></div>
       <div class="game-over hidden" id="gameOverScreen">
@@ -121,12 +131,16 @@ const heroHealthBar = requireElement<HTMLDivElement>('#heroHealthBar');
 const heroHealthText = requireElement<HTMLSpanElement>('#heroHealthText');
 const darkEnergyFill = requireElement<HTMLDivElement>('#darkEnergyFill');
 const darkEnergyText = requireElement<HTMLParagraphElement>('#darkEnergyText');
-const shopPanel = requireElement<HTMLDivElement>('#shopPanel');
-const shopItemsContainer = requireElement<HTMLDivElement>('#shopItemsContainer');
+const heroItemsContainer = requireElement<HTMLDivElement>('#heroItemsContainer');
+const buildingShopPanel = requireElement<HTMLDivElement>('#buildingShopPanel');
+const buildingShopItemsContainer = requireElement<HTMLDivElement>('#shopItemsContainer');
+const itemShopPanel = requireElement<HTMLDivElement>('#itemShopPanel');
+const itemShopItemsContainer = requireElement<HTMLDivElement>('#itemShopItemsContainer');
 const gameOverScreen = requireElement<HTMLDivElement>('#gameOverScreen');
 const gameOverTitle = requireElement<HTMLHeadingElement>('#gameOverTitle');
 const gameOverSubtext = requireElement<HTMLParagraphElement>('#gameOverSubtext');
 const workshopButton = requireElement<HTMLButtonElement>('#workshopButton');
+const arsenalButton = requireElement<HTMLButtonElement>('#arsenalButton');
 const canopyButton = requireElement<HTMLButtonElement>('#canopyButton');
 const resetButton = requireElement<HTMLButtonElement>('#resetButton');
 
@@ -138,7 +152,8 @@ for (let i = 0; i < INVENTORY_SLOTS; i++) {
   inventorySlots.push(slot);
 }
 
-const shopButtons = new Map<BuildingType, HTMLButtonElement>();
+const buildingShopButtons = new Map<BuildingType, HTMLButtonElement>();
+const itemButtons = new Map<ItemId, HTMLButtonElement>();
 
 function showTooltip(title: string, body: string) {
   tooltipPanel.innerHTML = `<div class="title">${title}</div><div>${body}</div>`;
@@ -171,7 +186,8 @@ function updateInventory() {
       slot.onclick = () => {
         game.selectBlueprint(i);
         updateInventory();
-        updateShopButtons();
+        updateBuildingShopButtons();
+        setItemShopOpen(false);
         if (!game.isBuildModeActive()) {
           game.setBuildMode(true);
         }
@@ -188,9 +204,9 @@ function updateInventory() {
   }
 }
 
-function populateShop() {
-  shopItemsContainer.innerHTML = '';
-  shopButtons.clear();
+function populateBuildingShop() {
+  buildingShopItemsContainer.innerHTML = '';
+  buildingShopButtons.clear();
   const seen = new Set<BuildingType>();
   for (const type of game.getBuildOrder()) {
     if (seen.has(type)) {
@@ -208,34 +224,119 @@ function populateShop() {
         game.selectBlueprint(index);
         game.setBuildMode(true);
         updateInventory();
-        updateShopButtons();
+        updateBuildingShopButtons();
       }
     });
     button.addEventListener('mouseenter', () =>
       showTooltip(info.name, `${info.description}<br />Cost: ${definition.cost} supplies.`)
     );
     button.addEventListener('mouseleave', hideTooltip);
-    shopItemsContainer.appendChild(button);
-    shopButtons.set(type, button);
+    buildingShopItemsContainer.appendChild(button);
+    buildingShopButtons.set(type, button);
   }
 }
 
-function updateShopButtons() {
+function updateBuildingShopButtons() {
   const supplies = game.getSupplies();
   const selected = game.getSelectedBlueprint();
-  for (const [type, button] of shopButtons.entries()) {
+  for (const [type, button] of buildingShopButtons.entries()) {
     const definition = getBuildingDefinition(type);
     const affordable = supplies >= definition.cost;
     button.classList.toggle('disabled', !affordable);
     button.classList.toggle('selected', type === selected);
   }
-  shopPanel.classList.toggle('hidden', !game.isBuildModeActive());
+  buildingShopPanel.classList.toggle('hidden', !game.isBuildModeActive());
   workshopButton.classList.toggle('selected', game.isBuildModeActive());
 }
 
-populateShop();
+let isItemShopOpen = false;
+let lastHeroItemsKey = '';
+
+function setItemShopOpen(open: boolean): void {
+  if (isItemShopOpen === open) {
+    return;
+  }
+  isItemShopOpen = open;
+  if (open && game.isBuildModeActive()) {
+    game.setBuildMode(false);
+    updateBuildingShopButtons();
+  }
+  if (!open) {
+    hideTooltip();
+  }
+  updateItemShopButtons();
+}
+
+function populateItemShop(): void {
+  itemShopItemsContainer.innerHTML = '';
+  itemButtons.clear();
+  for (const itemId of ITEM_ORDER) {
+    const definition = ITEM_DEFINITIONS[itemId];
+    const button = document.createElement('button');
+    button.className = 'shop-button';
+    button.innerHTML = `<span>${definition.icon} ${definition.name}</span><span class="price"></span>`;
+    button.addEventListener('click', () => {
+      if (game.purchaseItem(itemId)) {
+        updateItemShopButtons();
+        updateHeroItems(true);
+      }
+    });
+    button.addEventListener('mouseenter', () => showTooltip(definition.name, definition.description));
+    button.addEventListener('mouseleave', hideTooltip);
+    itemShopItemsContainer.appendChild(button);
+    itemButtons.set(itemId, button);
+  }
+  updateItemShopButtons();
+}
+
+function updateItemShopButtons(): void {
+  for (const [itemId, button] of itemButtons.entries()) {
+    const definition = ITEM_DEFINITIONS[itemId];
+    const owned = game.isItemOwned(itemId);
+    const canPurchase = game.canPurchaseItem(itemId);
+    const priceSpan = button.querySelector<HTMLSpanElement>('.price');
+    if (priceSpan) {
+      priceSpan.textContent = owned ? 'Owned' : `${definition.cost} Supplies`;
+    }
+    button.classList.toggle('disabled', !canPurchase);
+    button.classList.toggle('owned', owned);
+  }
+  itemShopPanel.classList.toggle('hidden', !isItemShopOpen);
+  arsenalButton.classList.toggle('selected', isItemShopOpen);
+}
+
+function updateHeroItems(force = false): void {
+  const items = game.getOwnedItems();
+  const key = items.join('|');
+  if (!force && key === lastHeroItemsKey) {
+    return;
+  }
+  lastHeroItemsKey = key;
+  heroItemsContainer.innerHTML = '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'hero-item hero-item-empty';
+    empty.textContent = 'None';
+    heroItemsContainer.appendChild(empty);
+    return;
+  }
+  for (const itemId of items) {
+    const definition = ITEM_DEFINITIONS[itemId];
+    const itemElement = document.createElement('div');
+    itemElement.className = 'hero-item';
+    itemElement.innerHTML = `<span class="item-icon">${definition.icon}</span>`;
+    itemElement.addEventListener('mouseenter', () => showTooltip(definition.name, definition.description));
+    itemElement.addEventListener('mouseleave', hideTooltip);
+    heroItemsContainer.appendChild(itemElement);
+  }
+}
+
+populateBuildingShop();
+populateItemShop();
 updateInventory();
-updateShopButtons();
+updateBuildingShopButtons();
+updateItemShopButtons();
+updateHeroItems(true);
 
 const toCanvasCoords = (event: PointerEvent) => {
   const rect = canvas.getBoundingClientRect();
@@ -264,8 +365,13 @@ canvas.addEventListener('contextmenu', (event) => {
 });
 
 workshopButton.addEventListener('click', () => {
+  setItemShopOpen(false);
   game.toggleBuildMode();
-  updateShopButtons();
+  updateBuildingShopButtons();
+});
+
+arsenalButton.addEventListener('click', () => {
+  setItemShopOpen(!isItemShopOpen);
 });
 
 canopyButton.addEventListener('click', () => {
@@ -276,7 +382,10 @@ resetButton.addEventListener('click', () => {
   game.reset();
   game.setCanvasHudEnabled(false);
   updateInventory();
-  updateShopButtons();
+  updateBuildingShopButtons();
+  setItemShopOpen(false);
+  updateItemShopButtons();
+  updateHeroItems(true);
 });
 
 window.addEventListener('keydown', (event) => {
@@ -291,17 +400,25 @@ window.addEventListener('keydown', (event) => {
     game.reset();
     game.setCanvasHudEnabled(false);
     updateInventory();
-    updateShopButtons();
+    updateBuildingShopButtons();
+    setItemShopOpen(false);
+    updateItemShopButtons();
+    updateHeroItems(true);
   } else if (key === 'b') {
     event.preventDefault();
+    setItemShopOpen(false);
     game.toggleBuildMode();
-    updateShopButtons();
+    updateBuildingShopButtons();
+  } else if (key === 'i') {
+    event.preventDefault();
+    setItemShopOpen(!isItemShopOpen);
   } else if (key === 'c') {
     game.toggleCanopy();
   } else if (key >= '1' && key <= '5') {
     game.selectBlueprint(Number(key) - 1);
     updateInventory();
-    updateShopButtons();
+    updateBuildingShopButtons();
+    setItemShopOpen(false);
   } else if (key === 'x') {
     game.startDismantle();
   }
@@ -362,7 +479,9 @@ function updateHud() {
   }
 
   updateInventory();
-  updateShopButtons();
+  updateBuildingShopButtons();
+  updateItemShopButtons();
+  updateHeroItems();
 }
 
 const ctx = context;

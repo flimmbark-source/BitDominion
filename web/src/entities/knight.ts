@@ -3,6 +3,10 @@ import {
   CASTLE_POS,
   FPS,
   KNIGHT_ACCEL,
+  KNIGHT_BOW_COOLDOWN,
+  KNIGHT_BOW_DAMAGE,
+  KNIGHT_BOW_PROJECTILE_SPEED,
+  KNIGHT_BOW_RANGE,
   KNIGHT_COLOR,
   KNIGHT_FRICTION,
   KNIGHT_SPEED,
@@ -28,6 +32,11 @@ export class Knight {
   private swingHits = new Set<DarkUnit>();
   private lastSwingProgress = 0;
   public castleTimer = 0;
+  private bowEquipped = false;
+  private bowCooldownTimer = 0;
+  private bowCooldownModifier = 1;
+  private bowRange = KNIGHT_BOW_RANGE;
+  private speedMultiplier = 1;
 
   setTarget(target: Vector2): void {
     this.target.copy(target);
@@ -42,7 +51,7 @@ export class Knight {
     const steeringStrength = Math.min(1, KNIGHT_ACCEL * dtRatio);
 
     if (distance > KNIGHT_STOP_DISTANCE) {
-      const desiredVelocity = toTarget.normalize().scale(KNIGHT_SPEED);
+      const desiredVelocity = toTarget.normalize().scale(KNIGHT_SPEED * this.speedMultiplier);
       this.velocity.lerp(desiredVelocity, steeringStrength);
     } else {
       this.velocity.lerp(new Vector2(), steeringStrength);
@@ -75,6 +84,10 @@ export class Knight {
     if (this.swingCooldown > 0) {
       this.swingCooldown = Math.max(0, this.swingCooldown - dt);
     }
+
+    if (this.bowCooldownTimer > 0) {
+      this.bowCooldownTimer = Math.max(0, this.bowCooldownTimer - dt);
+    }
   }
 
   tryAttack(units: DarkUnit[]): DarkUnit[] {
@@ -105,6 +118,65 @@ export class Knight {
     this.swingHits.clear();
     this.lastSwingProgress = 0;
     return [];
+  }
+
+  hasBowEquipped(): boolean {
+    return this.bowEquipped;
+  }
+
+  grantBow(): void {
+    if (this.bowEquipped) {
+      return;
+    }
+    this.bowEquipped = true;
+    this.bowCooldownTimer = 0;
+  }
+
+  addSpeedMultiplier(multiplier: number): void {
+    if (multiplier <= 0) {
+      return;
+    }
+    this.speedMultiplier *= multiplier;
+  }
+
+  multiplyBowCooldown(multiplier: number): void {
+    if (multiplier <= 0) {
+      return;
+    }
+    const clampedMultiplier = Math.max(0.2, multiplier);
+    const previousModifier = this.bowCooldownModifier;
+    this.bowCooldownModifier = Math.max(0.1, this.bowCooldownModifier * clampedMultiplier);
+    if (this.bowCooldownTimer > 0) {
+      const ratio = this.bowCooldownTimer / (KNIGHT_BOW_COOLDOWN * previousModifier);
+      const nextDuration = KNIGHT_BOW_COOLDOWN * this.bowCooldownModifier;
+      this.bowCooldownTimer = Math.max(0, nextDuration * ratio);
+    }
+  }
+
+  getBowRange(): number {
+    return this.bowRange;
+  }
+
+  tryShootBow(target: DarkUnit): { position: Vector2; velocity: Vector2; damage: number } | null {
+    if (!this.bowEquipped || this.bowCooldownTimer > 0 || !target.alive) {
+      return null;
+    }
+    const toTarget = target.pos.clone().subtract(this.pos);
+    const distance = toTarget.length();
+    if (distance <= 0 || distance > this.bowRange) {
+      return null;
+    }
+    if (toTarget.lengthSq() === 0) {
+      return null;
+    }
+    toTarget.normalize();
+    const projectileVelocity = toTarget.clone().scale(KNIGHT_BOW_PROJECTILE_SPEED);
+    this.bowCooldownTimer = KNIGHT_BOW_COOLDOWN * this.bowCooldownModifier;
+    return {
+      position: this.pos.clone(),
+      velocity: projectileVelocity,
+      damage: KNIGHT_BOW_DAMAGE
+    };
   }
 
   draw(ctx: CanvasRenderingContext2D): void {

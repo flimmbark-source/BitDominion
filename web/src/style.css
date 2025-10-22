@@ -233,6 +233,53 @@ body {
   pointer-events: none;
 }
 
+.hero-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  min-width: 164px;
+}
+
+.hero-items-title {
+  font-family: 'MedievalSharp', cursive;
+  font-size: 16px;
+  color: #fbbf24;
+}
+
+.hero-items-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hero-item {
+  width: 44px;
+  height: 44px;
+  border: 1px solid #7a5c4b;
+  background: #1f1b13;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease-out, background 0.15s ease-out;
+}
+
+.hero-item:hover {
+  border-color: #fbbf24;
+  background: #372b1e;
+}
+
+.hero-item .item-icon {
+  font-size: 22px;
+}
+
+.hero-item-empty {
+  font-size: 13px;
+  color: #9ca3af;
+  padding: 6px 2px;
+}
+
 .shop-panel {
   position: absolute;
   left: 50%;
@@ -294,6 +341,16 @@ body {
   color: #6b7280;
   cursor: not-allowed;
   border-color: #4b3b2b;
+}
+
+.shop-button.owned {
+  background: #2f2618;
+  color: #f3f4f6;
+  border-color: #6b4f3a;
+}
+
+.shop-button.owned .price {
+  color: #34d399;
 }
 
 .shop-button .price {
