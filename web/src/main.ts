@@ -38,15 +38,18 @@ const BUILDING_DISPLAY: Record<BuildingType, { icon: string; name: string; descr
 };
 
 const INVENTORY_SLOTS = 6;
-const INITIAL_CAMERA_ZOOM = 1.25;
+const INITIAL_CAMERA_ZOOM = 1.6;
 const MIN_CAMERA_ZOOM = 0.75;
 const MAX_CAMERA_ZOOM = 2.5;
 const CAMERA_PAN_SPEED = 240;
+const GAME_SHELL_GAP = 12;
 
 const appRoot = document.querySelector<HTMLDivElement>('#app');
 if (!appRoot) {
   throw new Error('Missing #app root element');
 }
+
+const appRootElement: HTMLDivElement = appRoot;
 
 function requireElement<T extends Element>(selector: string): T {
   const element = document.querySelector(selector);
@@ -56,7 +59,7 @@ function requireElement<T extends Element>(selector: string): T {
   return element as T;
 }
 
-appRoot.innerHTML = `
+appRootElement.innerHTML = `
   <div class="game-shell">
     <div class="game-header">
       <h1>Grimm Dominion – Prototype</h1>
@@ -147,6 +150,28 @@ if (!context) {
   throw new Error('Unable to create canvas rendering context');
 }
 
+const gameContainerElement = requireElement<HTMLDivElement>('#gameContainer');
+const gameHeader = requireElement<HTMLDivElement>('.game-header');
+
+function updateGameViewportSize(): void {
+  const appStyles = getComputedStyle(appRootElement);
+  const paddingX = parseFloat(appStyles.paddingLeft) + parseFloat(appStyles.paddingRight);
+  const paddingY = parseFloat(appStyles.paddingTop) + parseFloat(appStyles.paddingBottom);
+  const availableWidth = Math.max(0, window.innerWidth - paddingX);
+  const headerHeight = gameHeader.getBoundingClientRect().height;
+  const availableHeight = Math.max(0, window.innerHeight - paddingY - headerHeight - GAME_SHELL_GAP);
+  const size = Math.min(availableWidth, availableHeight);
+  if (!Number.isFinite(size) || size <= 0) {
+    gameContainerElement.style.removeProperty('--game-size');
+    return;
+  }
+  gameContainerElement.style.setProperty('--game-size', `${size}px`);
+}
+
+window.addEventListener('resize', updateGameViewportSize);
+window.addEventListener('orientationchange', updateGameViewportSize);
+updateGameViewportSize();
+
 const camera = {
   center: { x: WIDTH / 2, y: HEIGHT / 2 },
   zoom: INITIAL_CAMERA_ZOOM
@@ -208,6 +233,18 @@ clampCamera();
 
 const game = new Game();
 game.setCanvasHudEnabled(false);
+
+function focusCameraOnKnight(options?: { zoom?: number }): void {
+  if (options && typeof options.zoom === 'number') {
+    camera.zoom = Math.max(MIN_CAMERA_ZOOM, Math.min(MAX_CAMERA_ZOOM, options.zoom));
+  }
+  const { x, y } = game.knight.pos;
+  camera.center.x = x;
+  camera.center.y = y;
+  clampCamera();
+}
+
+focusCameraOnKnight({ zoom: INITIAL_CAMERA_ZOOM });
 
 const tooltipPanel = requireElement<HTMLDivElement>('#tooltipPanel');
 const inventoryPanel = requireElement<HTMLDivElement>('#inventoryPanel');
@@ -722,6 +759,8 @@ canopyButton.addEventListener('click', () => {
 resetButton.addEventListener('click', () => {
   game.reset();
   game.setCanvasHudEnabled(false);
+  focusCameraOnKnight({ zoom: INITIAL_CAMERA_ZOOM });
+  cameraPan.up = cameraPan.down = cameraPan.left = cameraPan.right = false;
   updateInventory();
   updateBuildingShopButtons();
   setItemShopOpen(false);
@@ -741,6 +780,8 @@ window.addEventListener('keydown', (event) => {
   if (key === 'r') {
     game.reset();
     game.setCanvasHudEnabled(false);
+    focusCameraOnKnight({ zoom: INITIAL_CAMERA_ZOOM });
+    cameraPan.up = cameraPan.down = cameraPan.left = cameraPan.right = false;
     updateInventory();
     updateBuildingShopButtons();
     setItemShopOpen(false);
@@ -759,10 +800,7 @@ window.addEventListener('keydown', (event) => {
     game.toggleCanopy();
   } else if (code === 'Space') {
     event.preventDefault();
-    const { x, y } = game.knight.pos;
-    camera.center.x = x;
-    camera.center.y = y;
-    clampCamera();
+    focusCameraOnKnight();
   } else if (code === 'KeyW') {
     event.preventDefault();
     cameraPan.up = true;

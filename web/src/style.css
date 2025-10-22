@@ -2,25 +2,21 @@
 
 :root {
   color-scheme: dark;
+  --game-size: 640px;
 }
 
 body {
   margin: 0;
-  height: 100vh;
+  min-height: 100vh;
   background-color: #111827;
   color: #e5e7eb;
   font-family: 'Inter', sans-serif;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
   overflow: hidden;
 }
 
 #app {
   width: 100%;
-  max-width: 1100px;
-  height: 100%;
+  min-height: 100vh;
   padding: 16px 18px 20px;
   box-sizing: border-box;
   display: flex;
@@ -57,10 +53,11 @@ body {
 
 .game-shell {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   flex: 1;
   min-height: 0;
+  width: 100%;
 }
 
 .game-container {
@@ -70,9 +67,13 @@ body {
   overflow: hidden;
   min-height: 0;
   box-shadow: 0 0 20px rgba(0, 0, 0, 0.55);
-  width: min(640px, calc(100% - 32px));
-  height: min(640px, calc(100% - 32px));
+  width: var(--game-size);
+  height: var(--game-size);
+  max-width: 100%;
+  max-height: 100%;
   margin: 0 auto;
+  align-self: center;
+  justify-self: center;
 }
 
 .game-canvas {
@@ -81,6 +82,7 @@ body {
   display: block;
   background: #101619;
   cursor: crosshair;
+  touch-action: none;
 }
 
 .ui-panel {
