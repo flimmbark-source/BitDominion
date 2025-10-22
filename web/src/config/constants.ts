@@ -22,7 +22,7 @@ export const SHIELD_FLASH_DURATION = 0.35;
 export const KNIGHT_SIZE = 6;
 export const KNIGHT_ACCEL = 0.3;
 export const KNIGHT_FRICTION = 0.96;
-export const KNIGHT_SPEED = 0.6;
+export const KNIGHT_SPEED = 1.0;
 export const KNIGHT_STOP_DISTANCE = 5;
 export const KNIGHT_HP = 5;
 
@@ -176,7 +176,6 @@ export const NOISE_CHEST_STRENGTH = 16;
 
 export const DOWNTIME_DURATION = 45;
 export const WAVE_DURATION = 60;
-export const QUEST_COUNT = 2;
 export const QUEST_RADIUS = 32;
 export const QUEST_COMPLETION_TIME = 4.5;
 export const QUEST_REWARD_SUPPLIES = 35;
@@ -188,6 +187,8 @@ export const CREEP_PACK_SIZE: [number, number] = [3, 5];
 export const CREEP_REWARD_SUPPLIES = 18;
 export const CREEP_REWARD_RELIC_SHARDS = 1;
 export const CREEP_UNIT_TYPES: UnitType[] = ['scout', 'scout', 'tank', 'priest'];
+export const MONSTER_LAIR_RADIUS = 120;
+export const MONSTER_LAIR_VILLAGE_BUFFER = 160;
 
 export const TEMP_BUFF_WAVE_DURATION = 1;
 

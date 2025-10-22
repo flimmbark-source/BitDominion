@@ -23,7 +23,8 @@ import {
   UnitType,
   ENEMY_BUILDING_TARGET_RANGE,
   ENEMY_BUILDING_TARGET_CHANCE,
-  ENEMY_BUILDING_FOCUS_TIME
+  ENEMY_BUILDING_FOCUS_TIME,
+  MONSTER_LAIR_RADIUS
 } from '../config/constants';
 import { Vector2 } from '../math/vector2';
 import { mixColors } from '../utils/color';
@@ -38,6 +39,12 @@ export type DarkUnitAllegiance = 'dark' | 'wild';
 interface DotEffect {
   remaining: number;
   dps: number;
+}
+
+interface DarkUnitOptions {
+  allegiance?: DarkUnitAllegiance;
+  lairCenter?: Vector2;
+  lairRadius?: number;
 }
 
 const INVESTIGATION_ARRIVE_RADIUS = 6;
@@ -83,12 +90,28 @@ export class DarkUnit {
   private slowTimer = 0;
   private speedMultiplier = 1;
   private dotEffects: DotEffect[] = [];
+  private lairCenter: Vector2 | null = null;
+  private lairRadius = MONSTER_LAIR_RADIUS;
 
-  constructor(public pos: Vector2, public readonly type: UnitType, id: number, allegiance: DarkUnitAllegiance = 'dark') {
+  constructor(
+    public pos: Vector2,
+    public readonly type: UnitType,
+    id: number,
+    allegiance: DarkUnitAllegiance = 'dark',
+    options: DarkUnitOptions = {}
+  ) {
     this.hp = UNIT_STATS[type].maxHp;
     this.id = id;
-    this.allegiance = allegiance;
+    this.allegiance = options.allegiance ?? allegiance;
     this.pickNewDirection();
+    if (this.allegiance === 'wild') {
+      const center = options.lairCenter ?? pos;
+      this.lairCenter = center.clone();
+      this.lairRadius = options.lairRadius ?? MONSTER_LAIR_RADIUS;
+    } else {
+      this.lairCenter = null;
+      this.lairRadius = MONSTER_LAIR_RADIUS;
+    }
   }
 
   update(dt: number, knight: Knight, game: Game, world: World): void {
@@ -100,6 +123,7 @@ export class DarkUnit {
     const dtRatio = dt * FPS;
     const stats = UNIT_STATS[this.type];
     const isDark = this.allegiance === 'dark';
+    const isWild = this.allegiance === 'wild';
 
     if (this.slowTimer > 0) {
       this.slowTimer = Math.max(0, this.slowTimer - dt);
@@ -111,11 +135,21 @@ export class DarkUnit {
       this.buildingRetargetCooldown = Math.max(0, this.buildingRetargetCooldown - dt);
     }
 
-    this.updateBuildingFocus(dt, game, world);
+    if (isDark) {
+      this.updateBuildingFocus(dt, game, world);
+    } else {
+      this.clearBuildingTarget();
+    }
     const toKnight = knight.pos.clone().subtract(this.pos);
     const distance = toKnight.length();
     const previouslyDetecting = this.detecting;
-    const seesKnight = distance <= stats.detectionRadius && world.hasLineOfSight(this.pos, knight.pos);
+    let seesKnight = distance <= stats.detectionRadius && world.hasLineOfSight(this.pos, knight.pos);
+    if (isWild && this.lairCenter) {
+      const knightLairDistance = this.lairCenter.distanceTo(knight.pos);
+      if (knightLairDistance > this.lairRadius) {
+        seesKnight = false;
+      }
+    }
     const tankCanPersist = this.canTankPersist(distance, stats);
     if (seesKnight) {
       this.detecting = true;
@@ -139,7 +173,7 @@ export class DarkUnit {
       this.searchTimer = SEARCH_DURATION;
       this.searchOrigin = knight.pos.clone();
     } else {
-      if (previouslyDetecting && this.behavior === 'chasing' && !tankCanPersist) {
+      if (isDark && previouslyDetecting && this.behavior === 'chasing' && !tankCanPersist) {
         this.beginSearch(game);
       }
       if (!tankCanPersist) {
@@ -173,12 +207,20 @@ export class DarkUnit {
         );
         break;
       case 'searching':
+        if (!isDark) {
+          this.behavior = 'idle';
+          break;
+        }
         if (world.isPointOnRoad(this.pos)) {
           this.roadAssistTimer = Math.max(this.roadAssistTimer, 2);
         }
         this.updateSearch(dt, game, stats, dtRatio, world, isDark);
         break;
       case 'investigating':
+        if (!isDark) {
+          this.behavior = 'idle';
+          break;
+        }
         this.updateInvestigation(dt, stats, dtRatio);
         break;
       default:
@@ -190,6 +232,15 @@ export class DarkUnit {
     this.pos.add(this.velocity.clone().scale(dtRatio));
     world.resolveStaticCollisions(this.pos, this.getHalfSize(), { entityType: 'monster' });
     world.constrainToArena(this, this.getHalfSize(), { bounce: true });
+    if (isWild && this.lairCenter) {
+      const offset = this.pos.clone().subtract(this.lairCenter);
+      const distanceFromLair = offset.length();
+      if (distanceFromLair > this.lairRadius) {
+        const direction = offset.lengthSq() > 0 ? offset.normalize() : new Vector2(1, 0);
+        this.pos.copy(this.lairCenter.clone().add(direction.scale(this.lairRadius)));
+        this.velocity.scale(0.35);
+      }
+    }
 
     if (this.attackCooldownTimer > 0) {
       this.attackCooldownTimer = Math.max(0, this.attackCooldownTimer - dt);
@@ -205,7 +256,7 @@ export class DarkUnit {
   }
 
   startInvestigation(position: Vector2): void {
-    if (!this.alive || this.behavior === 'chasing') {
+    if (!this.alive || this.behavior === 'chasing' || this.allegiance !== 'dark') {
       return;
     }
     this.behavior = 'investigating';
@@ -218,7 +269,7 @@ export class DarkUnit {
   }
 
   notifyNoise(position: Vector2): void {
-    if (!this.alive || this.type !== 'scout' || this.behavior !== 'idle') {
+    if (!this.alive || this.allegiance !== 'dark' || this.type !== 'scout' || this.behavior !== 'idle') {
       return;
     }
     if (this.pos.distanceTo(position) <= NOISE_INVESTIGATE_RADIUS) {
@@ -226,11 +277,11 @@ export class DarkUnit {
     }
   }
 
-  receiveArcHit(knight: Knight): boolean {
+  receiveArcHit(knight: Knight, damage: number): boolean {
     if (!this.alive) {
       return false;
     }
-    this.takeDamage(1);
+    this.takeDamage(Math.max(0, damage));
     if (this.type === 'tank') {
       this.applyTankKnockback(knight);
     }
@@ -282,10 +333,12 @@ export class DarkUnit {
       target = 'knight';
       targetPos = knight.pos.clone();
     } else {
-      villagerTarget = world.findClosestVillager(this.pos, attackRange);
-      if (villagerTarget && (!isRanged || world.hasLineOfSight(this.pos, villagerTarget.pos))) {
-        target = 'villager';
-        targetPos = villagerTarget.pos.clone();
+      if (this.allegiance !== 'wild') {
+        villagerTarget = world.findClosestVillager(this.pos, attackRange);
+        if (villagerTarget && (!isRanged || world.hasLineOfSight(this.pos, villagerTarget.pos))) {
+          target = 'villager';
+          targetPos = villagerTarget.pos.clone();
+        }
       }
     }
 
@@ -420,7 +473,15 @@ export class DarkUnit {
 
   private pickNewDirection(): void {
     const stats = UNIT_STATS[this.type];
-    const angle = Math.random() * Math.PI * 2;
+    let angle = Math.random() * Math.PI * 2;
+    if (this.allegiance === 'wild' && this.lairCenter) {
+      const toCenter = this.lairCenter.clone().subtract(this.pos);
+      if (toCenter.lengthSq() > 0) {
+        const centerAngle = Math.atan2(toCenter.y, toCenter.x);
+        const bias = (Math.random() - 0.5) * Math.PI * 0.6;
+        angle = centerAngle + bias;
+      }
+    }
     const speed =
       (stats.minSpeed + Math.random() * (stats.maxSpeed - stats.minSpeed)) * this.speedMultiplier;
     this.velocity.set(Math.cos(angle) * speed, Math.sin(angle) * speed);
@@ -447,6 +508,10 @@ export class DarkUnit {
   }
 
   private updateIdle(dt: number, game: Game, stats: (typeof UNIT_STATS)[keyof typeof UNIT_STATS], dtRatio: number): void {
+    if (this.allegiance === 'wild') {
+      this.updateWildIdle(dt, stats, dtRatio);
+      return;
+    }
     const anchor = game.getHighestSuspicionAnchor();
     let followingAnchor = false;
     if (anchor) {
@@ -466,6 +531,28 @@ export class DarkUnit {
       this.wanderTimer -= dt;
       if (this.wanderTimer <= 0) {
         this.pickNewDirection();
+      }
+    }
+  }
+
+  private updateWildIdle(
+    dt: number,
+    stats: (typeof UNIT_STATS)[keyof typeof UNIT_STATS],
+    dtRatio: number
+  ): void {
+    this.wanderTimer -= dt;
+    if (this.wanderTimer <= 0) {
+      this.pickNewDirection();
+    }
+    if (this.lairCenter) {
+      const distance = this.pos.distanceTo(this.lairCenter);
+      if (distance > this.lairRadius * 0.7) {
+        this.steerTowards(
+          this.lairCenter,
+          stats.maxSpeed * this.speedMultiplier,
+          dtRatio,
+          UNIT_DETECTION_LERP * 0.4
+        );
       }
     }
   }
