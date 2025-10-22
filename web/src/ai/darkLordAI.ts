@@ -22,6 +22,10 @@ export class DarkLordAI {
     this.decayReveal(dt);
 
     this.spawnTimer += dt;
+    if (!game.isWaveActive()) {
+      this.spawnTimer = 0;
+      return;
+    }
     while (this.spawnTimer >= DARK_LORD_SPAWN_INTERVAL) {
       this.spawnTimer -= DARK_LORD_SPAWN_INTERVAL;
       this.trySpawn(game);
@@ -133,7 +137,8 @@ export class DarkLordAI {
     if (!this.canAfford(type)) {
       return false;
     }
-    if (!game.spawnUnit(type, position)) {
+    const unit = game.spawnUnit(type, position);
+    if (!unit) {
       return false;
     }
     this.evilEnergy -= UNIT_STATS[type].cost;

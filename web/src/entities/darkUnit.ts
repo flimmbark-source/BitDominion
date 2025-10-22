@@ -33,6 +33,13 @@ import type { Knight } from './knight';
 import { getBuildingHalfSize } from './building';
 import type { BuildingInstance } from './building';
 
+export type DarkUnitAllegiance = 'dark' | 'wild';
+
+interface DotEffect {
+  remaining: number;
+  dps: number;
+}
+
 const INVESTIGATION_ARRIVE_RADIUS = 6;
 const INVESTIGATION_TRAVEL_TIMEOUT = NOISE_INVESTIGATE_TIME * 3;
 const INVESTIGATION_ORBIT_SPEED = Math.PI * 0.9;
@@ -46,6 +53,8 @@ export class DarkUnit {
   public alive = true;
   public hp: number;
   public behavior: DarkUnitBehavior = 'idle';
+  public readonly id: number;
+  public readonly allegiance: DarkUnitAllegiance;
 
   private attackCooldownTimer = 0;
   private attackVisualTimer = 0;
@@ -73,19 +82,24 @@ export class DarkUnit {
   private buildingAttackTimer = 0;
   private slowTimer = 0;
   private speedMultiplier = 1;
+  private dotEffects: DotEffect[] = [];
 
-  constructor(public pos: Vector2, public readonly type: UnitType) {
+  constructor(public pos: Vector2, public readonly type: UnitType, id: number, allegiance: DarkUnitAllegiance = 'dark') {
     this.hp = UNIT_STATS[type].maxHp;
+    this.id = id;
+    this.allegiance = allegiance;
     this.pickNewDirection();
   }
 
   update(dt: number, knight: Knight, game: Game, world: World): void {
+    this.updateDotEffects(dt);
     if (!this.alive) {
       return;
     }
 
     const dtRatio = dt * FPS;
     const stats = UNIT_STATS[this.type];
+    const isDark = this.allegiance === 'dark';
 
     if (this.slowTimer > 0) {
       this.slowTimer = Math.max(0, this.slowTimer - dt);
@@ -112,12 +126,14 @@ export class DarkUnit {
     if (seesKnight && distance > 0) {
       this.lineOfSightTimer += dt;
       if (this.lineOfSightTimer >= KNIGHT_SIGHT_CONFIRM_TIME && this.lineOfSightTimer - dt < KNIGHT_SIGHT_CONFIRM_TIME) {
-        if (this.type === 'scout') {
+        if (isDark && this.type === 'scout') {
           console.log(
             `[SCOUT] Howl! Knight spotted at (${knight.pos.x.toFixed(0)}, ${knight.pos.y.toFixed(0)})`
           );
         }
-        game.registerKnightSighting(knight.pos);
+        if (isDark) {
+          game.registerKnightSighting(knight.pos);
+        }
       }
       this.behavior = 'chasing';
       this.searchTimer = SEARCH_DURATION;
@@ -138,7 +154,7 @@ export class DarkUnit {
     }
 
     this.updateDetectionTint(dtRatio);
-    this.updatePriestReveal(dt, distance, knight, game);
+    this.updatePriestReveal(dt, distance, knight, game, isDark);
     if (this.roadAssistTimer > 0) {
       this.roadAssistTimer = Math.max(0, this.roadAssistTimer - dt);
     }
@@ -160,7 +176,7 @@ export class DarkUnit {
         if (world.isPointOnRoad(this.pos)) {
           this.roadAssistTimer = Math.max(this.roadAssistTimer, 2);
         }
-        this.updateSearch(dt, game, stats, dtRatio, world);
+        this.updateSearch(dt, game, stats, dtRatio, world, isDark);
         break;
       case 'investigating':
         this.updateInvestigation(dt, stats, dtRatio);
@@ -459,7 +475,8 @@ export class DarkUnit {
     game: Game,
     stats: (typeof UNIT_STATS)[keyof typeof UNIT_STATS],
     dtRatio: number,
-    world: World
+    world: World,
+    isDark: boolean
   ): void {
     this.searchTimer = Math.max(0, this.searchTimer - dt);
     if (this.searchTimer === 0 || !this.searchOrigin) {
@@ -484,7 +501,7 @@ export class DarkUnit {
       onRoad || this.roadAssistTimer > 0
     );
 
-    if (Math.random() < dt * 0.6) {
+    if (isDark && Math.random() < dt * 0.6) {
       game.registerKnightSighting(target);
     }
   }
@@ -635,6 +652,13 @@ export class DarkUnit {
     return this.getHalfSize();
   }
 
+  applyDot(dps: number, duration: number): void {
+    if (dps <= 0 || duration <= 0) {
+      return;
+    }
+    this.dotEffects.push({ dps, remaining: duration });
+  }
+
   applySlow(factor: number, duration: number): void {
     const clamped = Math.min(1, Math.max(0, factor));
     this.speedMultiplier = Math.min(this.speedMultiplier, clamped);
@@ -648,7 +672,13 @@ export class DarkUnit {
     this.detectionTint = Math.max(0, Math.min(1, this.detectionTint));
   }
 
-  private updatePriestReveal(dt: number, distance: number, knight: Knight, game: Game): void {
+  private updatePriestReveal(
+    dt: number,
+    distance: number,
+    knight: Knight,
+    game: Game,
+    isDark: boolean
+  ): void {
     if (this.type !== 'priest') {
       this.priestProximityTimer = 0;
       this.priestRevealTimer = 0;
@@ -668,7 +698,9 @@ export class DarkUnit {
 
     if (this.priestRevealTimer > 0) {
       this.priestRevealTimer = Math.max(0, this.priestRevealTimer - dt);
-      game.registerKnightReveal(knight.pos, { escalateSuspicion: startedReveal });
+      if (isDark) {
+        game.registerKnightReveal(knight.pos, { escalateSuspicion: startedReveal });
+      }
     }
   }
 
@@ -683,5 +715,20 @@ export class DarkUnit {
 
   private getHalfSize(): number {
     return UNIT_STATS[this.type].size / 2;
+  }
+
+  private updateDotEffects(dt: number): void {
+    if (!this.dotEffects.length) {
+      return;
+    }
+    let totalDamage = 0;
+    for (const effect of this.dotEffects) {
+      effect.remaining = Math.max(0, effect.remaining - dt);
+      totalDamage += effect.dps * dt;
+    }
+    this.dotEffects = this.dotEffects.filter((effect) => effect.remaining > 0);
+    if (totalDamage > 0) {
+      this.takeDamage(totalDamage);
+    }
   }
 }

@@ -37,6 +37,7 @@ export class Knight {
   private bowCooldownModifier = 1;
   private bowRange = KNIGHT_BOW_RANGE;
   private speedMultiplier = 1;
+  private temporarySpeedMultiplier = 1;
 
   setTarget(target: Vector2): void {
     this.target.copy(target);
@@ -51,7 +52,9 @@ export class Knight {
     const steeringStrength = Math.min(1, KNIGHT_ACCEL * dtRatio);
 
     if (distance > KNIGHT_STOP_DISTANCE) {
-      const desiredVelocity = toTarget.normalize().scale(KNIGHT_SPEED * this.speedMultiplier);
+      const desiredVelocity = toTarget
+        .normalize()
+        .scale(KNIGHT_SPEED * this.speedMultiplier * this.temporarySpeedMultiplier);
       this.velocity.lerp(desiredVelocity, steeringStrength);
     } else {
       this.velocity.lerp(new Vector2(), steeringStrength);
@@ -61,7 +64,7 @@ export class Knight {
     }
 
     world.applyTerrainSteering(this, KNIGHT_SIZE / 2, dt, { entityType: 'knight' });
-    this.velocity.limit(KNIGHT_SPEED);
+    this.velocity.limit(KNIGHT_SPEED * this.speedMultiplier * this.temporarySpeedMultiplier);
 
     if (distance <= KNIGHT_STOP_DISTANCE && this.velocity.lengthSq() < 0.01) {
       this.velocity.set(0, 0);
@@ -137,6 +140,14 @@ export class Knight {
       return;
     }
     this.speedMultiplier *= multiplier;
+  }
+
+  setTemporarySpeedMultiplier(multiplier: number): void {
+    if (!Number.isFinite(multiplier) || multiplier <= 0) {
+      this.temporarySpeedMultiplier = 1;
+      return;
+    }
+    this.temporarySpeedMultiplier = multiplier;
   }
 
   multiplyBowCooldown(multiplier: number): void {

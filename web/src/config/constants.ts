@@ -174,6 +174,51 @@ export const NOISE_SPRINT_STRENGTH = 6;
 export const NOISE_VILLAGER_ALARM_STRENGTH = 9;
 export const NOISE_CHEST_STRENGTH = 16;
 
+export const DOWNTIME_DURATION = 45;
+export const WAVE_DURATION = 60;
+export const QUEST_COUNT = 2;
+export const QUEST_RADIUS = 32;
+export const QUEST_COMPLETION_TIME = 4.5;
+export const QUEST_REWARD_SUPPLIES = 35;
+export const QUEST_REWARD_BUFF_MULTIPLIER = 0.12;
+export const QUEST_REWARD_SPEED_BONUS = 0.08;
+
+export const CREEP_CAMPS_PER_DOWNTIME = 3;
+export const CREEP_PACK_SIZE: [number, number] = [3, 5];
+export const CREEP_REWARD_SUPPLIES = 18;
+export const CREEP_REWARD_RELIC_SHARDS = 1;
+export const CREEP_UNIT_TYPES: UnitType[] = ['scout', 'scout', 'tank', 'priest'];
+
+export const TEMP_BUFF_WAVE_DURATION = 1;
+
+export const THROWING_KNIFE_COOLDOWN = 0.45;
+export const THROWING_KNIFE_RANGE = 180;
+export const THROWING_KNIFE_DAMAGE = 1.1;
+export const POISON_DAGGER_DPS = 0.5;
+export const POISON_DAGGER_DURATION = 4.5;
+
+export const TORCH_ORBIT_COUNT = 3;
+export const TORCH_ORBIT_RADIUS = 44;
+export const TORCH_TICK_INTERVAL = 0.3;
+export const TORCH_TICK_DAMAGE = 0.6;
+export const INFERNO_RING_RADIUS = 60;
+export const INFERNO_RING_DPS = 0.35;
+
+export const CROSSBOW_CHARM_COOLDOWN = 1.2;
+export const CROSSBOW_CHARM_RANGE = 260;
+export const CROSSBOW_CHARM_DAMAGE = 1.6;
+export const REPEATING_ARBALEST_COOLDOWN = 0.85;
+export const REPEATING_ARBALEST_PIERCE = 2;
+
+export const SMOKE_BOMB_INTERVAL = 7;
+export const SMOKE_BOMB_RADIUS = 70;
+export const SMOKE_BOMB_DURATION = 5.5;
+export const SMOKE_BOMB_SLOW = 0.55;
+export const CLOAK_FIELD_RADIUS = 90;
+export const CLOAK_FIELD_SLOW = 0.35;
+export const CLOAK_FIELD_DURATION = 6.5;
+export const CLOAK_FIELD_CLOAK_TIME = 2.5;
+
 export const TREE_STEER_STRENGTH = 18;
 export const HUT_STEER_STRENGTH = 22;
 export const VILLAGE_RADIUS = 70;
