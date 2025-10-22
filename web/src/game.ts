@@ -25,8 +25,11 @@ import {
   HP_BAR_HEIGHT,
   HP_BAR_WIDTH,
   HUD_COLOR,
+  KNIGHT_BOW_NOISE,
+  KNIGHT_BOW_COOLDOWN_MULTIPLIER,
   KNIGHT_HP,
   KNIGHT_SIZE,
+  KNIGHT_SPEED_BOOST_MULTIPLIER,
   LURE_BEACON_NOISE_INTERVAL,
   LURE_BEACON_NOISE_STRENGTH,
   MAX_UNITS,
@@ -83,6 +86,7 @@ import { Knight } from './entities/knight';
 import { Seal } from './entities/seal';
 import { Vector2 } from './math/vector2';
 import { World } from './world';
+import { ITEM_DEFINITIONS, ItemId } from './config/items';
 
 export interface CameraState {
   center: { x: number; y: number };
@@ -113,6 +117,14 @@ interface TowerProjectile {
   sourceId: number;
 }
 
+interface KnightProjectile {
+  id: number;
+  position: Vector2;
+  velocity: Vector2;
+  target: DarkUnit | null;
+  damage: number;
+}
+
 export class Game {
   public knight = new Knight();
   public units: DarkUnit[] = [];
@@ -134,14 +146,17 @@ export class Game {
   private supplyTimer = 0;
   private buildings: BuildingInstance[] = [];
   private projectiles: TowerProjectile[] = [];
+  private knightProjectiles: KnightProjectile[] = [];
   private buildMode = false;
   private buildSelection: BuildingType = 'watchtower';
   private buildCursor: Vector2 | null = null;
   private dismantleState: { buildingId: number; progress: number } | null = null;
   private hasWorkshopTech = false;
   private projectileIdCounter = 1;
+  private knightProjectileIdCounter = 1;
   private readonly buildOrder: BuildingType[] = ['watchtower', 'barricade', 'spike', 'beacon', 'workshop'];
   private canvasHudEnabled = true;
+  private ownedItems: Set<ItemId> = new Set();
 
   constructor() {
     this.world = new World();
@@ -150,6 +165,7 @@ export class Game {
     this._spawnInitialUnits(5);
     this.shieldWasActive = this._isShieldActive();
     this.world.setBuildingObstacles([]);
+    this._initializeKnightLoadout();
   }
 
   reset(): void {
@@ -177,6 +193,7 @@ export class Game {
     this.dismantleState = null;
     this.hasWorkshopTech = false;
     this.projectileIdCounter = 1;
+    this._initializeKnightLoadout();
     this._spawnInitialUnits(5);
     this.shieldWasActive = this._isShieldActive();
     this.shieldFlashTimer = 0;
@@ -189,6 +206,41 @@ export class Game {
 
   getSupplies(): number {
     return this.supplies;
+  }
+
+  getOwnedItems(): ItemId[] {
+    return Array.from(this.ownedItems);
+  }
+
+  isItemOwned(itemId: ItemId): boolean {
+    return this.ownedItems.has(itemId);
+  }
+
+  canPurchaseItem(itemId: ItemId): boolean {
+    const definition = ITEM_DEFINITIONS[itemId];
+    if (!definition) {
+      return false;
+    }
+    if (definition.unique && this.ownedItems.has(itemId)) {
+      return false;
+    }
+    return this.supplies >= definition.cost;
+  }
+
+  purchaseItem(itemId: ItemId): boolean {
+    const definition = ITEM_DEFINITIONS[itemId];
+    if (!definition) {
+      return false;
+    }
+    if (definition.unique && this.ownedItems.has(itemId)) {
+      return false;
+    }
+    if (this.supplies < definition.cost) {
+      return false;
+    }
+    this.supplies -= definition.cost;
+    this._grantItem(itemId);
+    return true;
   }
 
   getBuildOrder(): readonly BuildingType[] {
@@ -505,9 +557,11 @@ export class Game {
 
     this.units = this.units.filter((unit) => unit.alive);
 
+    this._updateKnightBow();
     this._updateBuildings(dt);
     this._updateDismantle(dt);
     this._updateProjectiles(dt);
+    this._updateKnightProjectiles(dt);
 
     this.world.update(dt, {
       knight: this.knight,
@@ -574,6 +628,7 @@ export class Game {
     }
 
     this._drawProjectiles(ctx);
+    this._drawKnightProjectiles(ctx);
 
     this.knight.draw(ctx);
     this.knight.drawSwing(ctx);
@@ -1050,6 +1105,41 @@ export class Game {
     this.world.setBuildingObstacles(obstacles);
   }
 
+  private _initializeKnightLoadout(): void {
+    this.ownedItems.clear();
+    this.knightProjectiles = [];
+    this.knightProjectileIdCounter = 1;
+    this._grantItem('bow');
+  }
+
+  private _grantItem(itemId: ItemId): void {
+    const definition = ITEM_DEFINITIONS[itemId];
+    if (!definition) {
+      return;
+    }
+    if (definition.unique && this.ownedItems.has(itemId)) {
+      return;
+    }
+    this.ownedItems.add(itemId);
+    this._applyItemEffect(itemId);
+  }
+
+  private _applyItemEffect(itemId: ItemId): void {
+    switch (itemId) {
+      case 'bow':
+        this.knight.grantBow();
+        break;
+      case 'scoutBoots':
+        this.knight.addSpeedMultiplier(KNIGHT_SPEED_BOOST_MULTIPLIER);
+        break;
+      case 'lightQuiver':
+        this.knight.multiplyBowCooldown(KNIGHT_BOW_COOLDOWN_MULTIPLIER);
+        break;
+      default:
+        break;
+    }
+  }
+
   private _addSupplies(amount: number): void {
     if (amount <= 0) {
       return;
@@ -1298,6 +1388,150 @@ export class Game {
     }
 
     this.projectiles = survivors;
+  }
+
+  private _updateKnightProjectiles(dt: number): void {
+    if (!this.knightProjectiles.length) {
+      return;
+    }
+
+    const survivors: KnightProjectile[] = [];
+    for (const projectile of this.knightProjectiles) {
+      const direction = projectile.velocity.clone();
+      const speed = direction.length();
+      if (speed <= 0) {
+        continue;
+      }
+      direction.scale(1 / speed);
+      const distance = speed * dt;
+      const hit = this.world.raycastObstacles(projectile.position, direction, distance);
+      if (hit + 0.001 < distance) {
+        continue;
+      }
+
+      projectile.position.add(direction.clone().scale(distance));
+
+      const target = projectile.target;
+      if (
+        target &&
+        target.alive &&
+        target.pos.distanceTo(projectile.position) <= target.getCollisionRadius() + 2.5
+      ) {
+        target.takeDamage(projectile.damage);
+        if (!target.alive) {
+          this.units = this.units.filter((unit) => unit.alive);
+        }
+        continue;
+      }
+
+      const hitUnit = this._findKnightProjectileHit(projectile);
+      if (hitUnit) {
+        hitUnit.takeDamage(projectile.damage);
+        if (!hitUnit.alive) {
+          this.units = this.units.filter((unit) => unit.alive);
+        }
+        continue;
+      }
+
+      if (
+        projectile.position.x < 0 ||
+        projectile.position.x > WIDTH ||
+        projectile.position.y < 0 ||
+        projectile.position.y > HEIGHT
+      ) {
+        continue;
+      }
+
+      survivors.push(projectile);
+    }
+
+    this.knightProjectiles = survivors;
+  }
+
+  private _findKnightProjectileHit(projectile: KnightProjectile): DarkUnit | null {
+    const radius = 2.5;
+    for (const unit of this.units) {
+      if (!unit.alive) {
+        continue;
+      }
+      const distance = unit.pos.distanceTo(projectile.position);
+      if (distance <= unit.getCollisionRadius() + radius) {
+        return unit;
+      }
+    }
+    return null;
+  }
+
+  private _findBowTarget(): DarkUnit | null {
+    const range = this.knight.getBowRange();
+    let nearest: DarkUnit | null = null;
+    let nearestDist = range + 1;
+    for (const unit of this.units) {
+      if (!unit.alive) {
+        continue;
+      }
+      const distance = unit.pos.distanceTo(this.knight.pos);
+      if (distance > range || distance >= nearestDist) {
+        continue;
+      }
+      if (!this.world.hasLineOfSight(this.knight.pos, unit.pos)) {
+        continue;
+      }
+      nearest = unit;
+      nearestDist = distance;
+    }
+    return nearest;
+  }
+
+  private _updateKnightBow(): void {
+    if (!this.knight.hasBowEquipped()) {
+      return;
+    }
+    const target = this._findBowTarget();
+    if (!target) {
+      return;
+    }
+    const shot = this.knight.tryShootBow(target);
+    if (!shot) {
+      return;
+    }
+    const projectile: KnightProjectile = {
+      id: this.knightProjectileIdCounter++,
+      position: shot.position,
+      velocity: shot.velocity,
+      target,
+      damage: shot.damage
+    };
+    this.knightProjectiles.push(projectile);
+    this._emitNoise(this.knight.pos, KNIGHT_BOW_NOISE);
+  }
+
+  private _drawKnightProjectiles(ctx: CanvasRenderingContext2D): void {
+    if (!this.knightProjectiles.length) {
+      return;
+    }
+    ctx.save();
+    ctx.strokeStyle = '#facc15';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.fillStyle = '#fde68a';
+    for (const projectile of this.knightProjectiles) {
+      const direction = projectile.velocity.clone();
+      const speed = direction.length();
+      if (speed <= 0) {
+        continue;
+      }
+      direction.scale(1 / speed);
+      const tail = projectile.position.clone().subtract(direction.clone().scale(6));
+      ctx.beginPath();
+      ctx.moveTo(projectile.position.x, projectile.position.y);
+      ctx.lineTo(tail.x, tail.y);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(projectile.position.x, projectile.position.y, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   private _updateWatchtower(

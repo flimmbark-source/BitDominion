@@ -26,6 +26,14 @@ export const KNIGHT_SPEED = 0.6;
 export const KNIGHT_STOP_DISTANCE = 5;
 export const KNIGHT_HP = 5;
 
+export const KNIGHT_SPEED_BOOST_MULTIPLIER = 1.15;
+export const KNIGHT_BOW_RANGE = 160;
+export const KNIGHT_BOW_COOLDOWN = 1.35;
+export const KNIGHT_BOW_PROJECTILE_SPEED = 360;
+export const KNIGHT_BOW_DAMAGE = 1;
+export const KNIGHT_BOW_NOISE = 8;
+export const KNIGHT_BOW_COOLDOWN_MULTIPLIER = 0.7;
+
 export const MELEE_RANGE = 32;
 export const ARC_WIDTH_DEG = 100;
 export const SWING_DURATION = 0.4;
