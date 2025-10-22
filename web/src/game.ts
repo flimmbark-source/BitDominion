@@ -3,6 +3,7 @@ import {
   ANCHOR_SIGHTING_BONUS,
   ANCHOR_SUSPICION_DECAY,
   ANCHOR_SUSPICION_MAX,
+  ARENA_PADDING,
   BACKGROUND_COLOR,
   BARRICADE_KNIGHT_SPEED_SCALE,
   BUILDING_CONSTRUCTION_RADIUS,
@@ -667,11 +668,32 @@ export class Game {
     const minRadius = SEAL_MIN_CASTLE_DIST;
     const maxRadius = Math.max(minRadius, Math.min(WIDTH, HEIGHT) / 2 - 80);
     const radiusRange = Math.max(0, maxRadius - minRadius);
+    const minX = ARENA_PADDING + SEAL_CHANNEL_RADIUS;
+    const maxX = WIDTH - ARENA_PADDING - SEAL_CHANNEL_RADIUS;
+    const minY = ARENA_PADDING + SEAL_CHANNEL_RADIUS;
+    const maxY = HEIGHT - ARENA_PADDING - SEAL_CHANNEL_RADIUS;
+
+    const isWithinBounds = (pos: Vector2) => pos.x >= minX && pos.x <= maxX && pos.y >= minY && pos.y <= maxY;
+    const createPosition = (angle: number, radius: number) =>
+      CASTLE_POS.clone().add(new Vector2(Math.cos(angle) * radius, Math.sin(angle) * radius));
+    const findPositionForAngle = (angle: number, initialRadius: number): Vector2 | null => {
+      const radiusStep = 10;
+      for (let radius = initialRadius; radius >= minRadius; radius -= radiusStep) {
+        const candidate = createPosition(angle, radius);
+        if (isWithinBounds(candidate)) {
+          return candidate;
+        }
+      }
+      return null;
+    };
 
     for (let attempts = 0; seals.length < SEAL_COUNT && attempts < maxAttempts; attempts++) {
       const angle = Math.random() * Math.PI * 2;
       const radius = minRadius + (radiusRange > 0 ? Math.random() * radiusRange : 0);
-      const pos = CASTLE_POS.clone().add(new Vector2(Math.cos(angle) * radius, Math.sin(angle) * radius));
+      const pos = createPosition(angle, radius);
+      if (!isWithinBounds(pos)) {
+        continue;
+      }
       if (seals.some((seal) => seal.pos.distanceTo(pos) < SEAL_MIN_SEPARATION)) {
         continue;
       }
@@ -680,11 +702,44 @@ export class Game {
 
     if (seals.length < SEAL_COUNT) {
       const fallbackRadius = Math.max(minRadius, minRadius + radiusRange / 2);
-      for (let i = seals.length; i < SEAL_COUNT; i++) {
-        const angle = (i / SEAL_COUNT) * Math.PI * 2;
-        const pos = CASTLE_POS.clone().add(new Vector2(Math.cos(angle) * fallbackRadius, Math.sin(angle) * fallbackRadius));
-        seals.push(new Seal(pos));
+      const fallbackCandidates: Vector2[] = [];
+      const samples = 48;
+      const offset = Math.random() * ((Math.PI * 2) / samples);
+      for (let sample = 0; sample < samples && seals.length + fallbackCandidates.length < SEAL_COUNT; sample++) {
+        const angle = offset + (sample / samples) * Math.PI * 2;
+        const candidate = findPositionForAngle(angle, fallbackRadius);
+        if (!candidate) {
+          continue;
+        }
+        if (
+          seals.some((seal) => seal.pos.distanceTo(candidate) < SEAL_MIN_SEPARATION) ||
+          fallbackCandidates.some((pos) => pos.distanceTo(candidate) < SEAL_MIN_SEPARATION)
+        ) {
+          continue;
+        }
+        fallbackCandidates.push(candidate);
       }
+
+      for (const candidate of fallbackCandidates) {
+        if (seals.length >= SEAL_COUNT) {
+          break;
+        }
+        seals.push(new Seal(candidate.clone()));
+      }
+    }
+
+    while (seals.length < SEAL_COUNT) {
+      const index = seals.length;
+      const emergencyX = Math.max(minX, CASTLE_POS.x - SEAL_MIN_CASTLE_DIST - index * 20);
+      const emergencyY = Math.min(maxY - index * SEAL_MIN_SEPARATION, maxY);
+      const emergencyPos = new Vector2(emergencyX, Math.max(minY, emergencyY));
+      while (seals.some((seal) => seal.pos.distanceTo(emergencyPos) < SEAL_MIN_SEPARATION * 0.75)) {
+        emergencyPos.y = Math.min(maxY, emergencyPos.y + SEAL_MIN_SEPARATION);
+        if (emergencyPos.y >= maxY) {
+          break;
+        }
+      }
+      seals.push(new Seal(emergencyPos));
     }
 
     return seals;
