@@ -134,6 +134,7 @@ export class Game {
   private hasWorkshopTech = false;
   private projectileIdCounter = 1;
   private readonly buildOrder: BuildingType[] = ['watchtower', 'barricade', 'spike', 'beacon', 'workshop'];
+  private canvasHudEnabled = true;
 
   constructor() {
     this.world = new World();
@@ -173,6 +174,54 @@ export class Game {
     this.shieldWasActive = this._isShieldActive();
     this.shieldFlashTimer = 0;
     this.world.setBuildingObstacles([]);
+  }
+
+  setCanvasHudEnabled(enabled: boolean): void {
+    this.canvasHudEnabled = enabled;
+  }
+
+  getSupplies(): number {
+    return this.supplies;
+  }
+
+  getBuildOrder(): readonly BuildingType[] {
+    return this.buildOrder;
+  }
+
+  getSelectedBlueprint(): BuildingType {
+    return this.buildSelection;
+  }
+
+  getSelectedBlueprintIndex(): number {
+    return this.buildOrder.indexOf(this.buildSelection);
+  }
+
+  isBuildModeActive(): boolean {
+    return this.buildMode;
+  }
+
+  setBuildMode(enabled: boolean): void {
+    if (this.buildMode === enabled) {
+      return;
+    }
+    this.buildMode = enabled;
+    if (this.buildMode) {
+      this.buildCursor = this.lastPointerPos ? this.lastPointerPos.clone() : null;
+    } else {
+      this.buildCursor = null;
+    }
+  }
+
+  canAffordBlueprint(type: BuildingType): boolean {
+    return this._canAfford(type);
+  }
+
+  getDarkEnergy(): number {
+    return this.darkLord.evilEnergy;
+  }
+
+  getUnitCount(): number {
+    return this.units.length;
   }
 
   canSpawnMoreUnits(): boolean {
@@ -380,12 +429,7 @@ export class Game {
   }
 
   toggleBuildMode(): void {
-    this.buildMode = !this.buildMode;
-    if (!this.buildMode) {
-      this.buildCursor = null;
-    } else {
-      this.buildCursor = this.lastPointerPos ? this.lastPointerPos.clone() : null;
-    }
+    this.setBuildMode(!this.buildMode);
   }
 
   selectBlueprint(index: number): void {
@@ -396,8 +440,7 @@ export class Game {
   }
 
   cancelBuildPreview(): void {
-    this.buildCursor = null;
-    this.buildMode = false;
+    this.setBuildMode(false);
   }
 
   startDismantle(): void {
@@ -421,8 +464,7 @@ export class Game {
   }
 
   private _exitBuildMode(): void {
-    this.buildMode = false;
-    this.buildCursor = null;
+    this.setBuildMode(false);
   }
 
   toggleCanopy(): void {
@@ -526,7 +568,9 @@ export class Game {
       this._drawDebugOverlay(ctx);
     }
 
-    this._drawHud(ctx);
+    if (this.canvasHudEnabled) {
+      this._drawHud(ctx);
+    }
 
     if (this.state === 'victory') {
       this._drawOverlay(ctx, 'VICTORY', VICTORY_COLOR, 'Press R to restart');
