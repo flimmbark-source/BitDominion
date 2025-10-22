@@ -3,7 +3,7 @@
 :root {
   color-scheme: dark;
   --game-min-size: 320px;
-  --game-max-size: 1024px;
+  --game-max-size: 1400px;
   --game-vertical-padding: 36px;
 }
 
