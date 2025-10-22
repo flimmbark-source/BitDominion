@@ -61,20 +61,13 @@ function requireElement<T extends Element>(selector: string): T {
 
 appRootElement.innerHTML = `
   <div class="game-shell">
-    <div class="game-header">
-      <h1>Grimm Dominion – Prototype</h1>
-      <p>
-        Mode: <strong>Countdown</strong> |
-        Loop: <strong>Setup → Quests → Wave → Rest</strong>
-      </p>
-      <div class="header-actions">
-        <button class="header-button" id="workshopButton">Workshop (B)</button>
-        <button class="header-button" id="arsenalButton">Arsenal (I)</button>
-        <button class="header-button" id="canopyButton">Toggle Canopy (C)</button>
-        <button class="header-button" id="resetButton">Reset (R)</button>
-      </div>
-    </div>
     <div class="game-container" id="gameContainer">
+      <div class="game-controls">
+        <button class="control-button" id="workshopButton" type="button">Workshop (B)</button>
+        <button class="control-button" id="arsenalButton" type="button">Arsenal (I)</button>
+        <button class="control-button" id="canopyButton" type="button">Toggle Canopy (C)</button>
+        <button class="control-button" id="resetButton" type="button">Reset (R)</button>
+      </div>
       <canvas id="gameCanvas" class="game-canvas"></canvas>
       <div class="dark-energy ui-panel" id="darkEnergyClock">
         <h2>Dark Energy</h2>
@@ -99,10 +92,10 @@ appRootElement.innerHTML = `
             <span class="health-text" id="heroHealthText">${KNIGHT_HP}/${KNIGHT_HP}</span>
           </div>
         </div>
-        <div class="ui-panel build-toggle" id="buildPrompt">
-          <div class="build-toggle-header">Build Mode (B)</div>
-          <div class="build-toggle-summary">Current plan: <span id="buildSelectedLabel">Workshop ledger closed</span></div>
-        </div>
+        <button class="ui-panel build-toggle" id="buildPrompt" type="button">
+          <span class="build-toggle-icon" aria-hidden="true">🔨</span>
+          <span class="build-toggle-text">(B)uild</span>
+        </button>
         <div class="ui-panel inventory" id="inventoryPanel"></div>
         <div class="ui-panel hero-items" id="heroItemsPanel">
           <div class="hero-items-title">Hero Gear</div>
@@ -151,15 +144,13 @@ if (!context) {
 }
 
 const gameContainerElement = requireElement<HTMLDivElement>('#gameContainer');
-const gameHeader = requireElement<HTMLDivElement>('.game-header');
 
 function updateGameViewportSize(): void {
   const appStyles = getComputedStyle(appRootElement);
   const paddingX = parseFloat(appStyles.paddingLeft) + parseFloat(appStyles.paddingRight);
   const paddingY = parseFloat(appStyles.paddingTop) + parseFloat(appStyles.paddingBottom);
   const availableWidth = Math.max(0, window.innerWidth - paddingX);
-  const headerHeight = gameHeader.getBoundingClientRect().height;
-  const availableHeight = Math.max(0, window.innerHeight - paddingY - headerHeight - GAME_SHELL_GAP);
+  const availableHeight = Math.max(0, window.innerHeight - paddingY - GAME_SHELL_GAP);
   const size = Math.min(availableWidth, availableHeight);
   if (!Number.isFinite(size) || size <= 0) {
     gameContainerElement.style.removeProperty('--game-size');
@@ -252,8 +243,7 @@ const heroGoldText = requireElement<HTMLSpanElement>('#heroGoldText');
 const heroShardText = requireElement<HTMLSpanElement>('#heroShardText');
 const heroHealthBar = requireElement<HTMLDivElement>('#heroHealthBar');
 const heroHealthText = requireElement<HTMLSpanElement>('#heroHealthText');
-const buildPrompt = requireElement<HTMLDivElement>('#buildPrompt');
-const buildSelectedLabel = requireElement<HTMLSpanElement>('#buildSelectedLabel');
+const buildPrompt = requireElement<HTMLButtonElement>('#buildPrompt');
 const darkEnergyFill = requireElement<HTMLDivElement>('#darkEnergyFill');
 const darkEnergyText = requireElement<HTMLParagraphElement>('#darkEnergyText');
 const heroItemsContainer = requireElement<HTMLDivElement>('#heroItemsContainer');
@@ -389,15 +379,22 @@ function updateBuildPrompt(): void {
   const selected = game.getSelectedBlueprint();
   const info = BUILDING_DISPLAY[selected];
   if (!info) {
-    buildSelectedLabel.textContent = 'Workshop ledger closed';
     buildPrompt.classList.remove('build-active', 'build-unaffordable');
+    buildPrompt.dataset.tooltipTitle = 'Workshop closed';
+    buildPrompt.dataset.tooltipBody = 'Select a structure in the workshop to prepare a build plan.';
+    buildPrompt.removeAttribute('aria-pressed');
+    buildPrompt.title = '(B)uild';
     return;
   }
   const definition = getBuildingDefinition(selected);
   const affordable = game.canAffordBlueprint(selected);
+  const buildModeActive = game.isBuildModeActive();
   const summary = `${info.icon} ${info.name} — ${definition.cost} supplies`;
-  buildSelectedLabel.textContent = affordable ? summary : `${summary} (need supplies)`;
-  buildPrompt.classList.toggle('build-active', game.isBuildModeActive());
+  buildPrompt.dataset.tooltipTitle = info.name;
+  buildPrompt.dataset.tooltipBody = `${info.description}<br />Cost: ${definition.cost} supplies.`;
+  buildPrompt.title = summary;
+  buildPrompt.setAttribute('aria-pressed', buildModeActive ? 'true' : 'false');
+  buildPrompt.classList.toggle('build-active', buildModeActive);
   buildPrompt.classList.toggle('build-unaffordable', !affordable);
 }
 
@@ -733,10 +730,13 @@ buildPrompt.addEventListener('click', () => {
 });
 
 buildPrompt.addEventListener('mouseenter', () => {
-  const blueprint = game.getSelectedBlueprint();
-  const info = BUILDING_DISPLAY[blueprint];
-  const definition = getBuildingDefinition(blueprint);
-  showTooltip(info.name, `${info.description}<br />Cost: ${definition.cost} supplies.`);
+  const title = buildPrompt.dataset.tooltipTitle;
+  const body = buildPrompt.dataset.tooltipBody;
+  if (title && body) {
+    showTooltip(title, body);
+  } else {
+    showTooltip('(B)uild', 'Select a structure in the workshop to prepare a build plan.');
+  }
 });
 
 buildPrompt.addEventListener('mouseleave', hideTooltip);
