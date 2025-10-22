@@ -42,7 +42,7 @@ const INITIAL_CAMERA_ZOOM = 1.6;
 const MIN_CAMERA_ZOOM = 0.75;
 const MAX_CAMERA_ZOOM = 2.5;
 const CAMERA_PAN_SPEED = 240;
-const GAME_SHELL_GAP = 12;
+const GAME_SHELL_GAP = 0;
 
 const appRoot = document.querySelector<HTMLDivElement>('#app');
 if (!appRoot) {

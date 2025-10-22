@@ -3,8 +3,8 @@
 :root {
   color-scheme: dark;
   --game-min-size: 320px;
-  --game-max-size: 1400px;
-  --game-vertical-padding: 36px;
+  --game-max-size: 1600px;
+  --game-vertical-padding: 24px;
 }
 
 body {
@@ -19,7 +19,7 @@ body {
 #app {
   width: 100%;
   min-height: 100vh;
-  padding: 16px 0 20px;
+  padding: 12px 0 12px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -43,7 +43,7 @@ body {
   box-shadow: 0 0 20px rgba(0, 0, 0, 0.55);
   width: clamp(
     var(--game-min-size),
-    min(100vw, calc(100vh - var(--game-vertical-padding))),
+    var(--game-size, min(100vw, calc(100vh - var(--game-vertical-padding)))),
     var(--game-max-size)
   );
   aspect-ratio: 1 / 1;
