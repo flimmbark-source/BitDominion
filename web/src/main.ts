@@ -62,12 +62,6 @@ function requireElement<T extends Element>(selector: string): T {
 appRootElement.innerHTML = `
   <div class="game-shell">
     <div class="game-container" id="gameContainer">
-      <div class="game-controls">
-        <button class="control-button" id="workshopButton" type="button">Workshop (B)</button>
-        <button class="control-button" id="arsenalButton" type="button">Arsenal (I)</button>
-        <button class="control-button" id="canopyButton" type="button">Toggle Canopy (C)</button>
-        <button class="control-button" id="resetButton" type="button">Reset (R)</button>
-      </div>
       <canvas id="gameCanvas" class="game-canvas"></canvas>
       <div class="dark-energy ui-panel" id="darkEnergyClock">
         <h2>Dark Energy</h2>
@@ -258,10 +252,6 @@ const itemShopItemsContainer = requireElement<HTMLDivElement>('#itemShopItemsCon
 const gameOverScreen = requireElement<HTMLDivElement>('#gameOverScreen');
 const gameOverTitle = requireElement<HTMLHeadingElement>('#gameOverTitle');
 const gameOverSubtext = requireElement<HTMLParagraphElement>('#gameOverSubtext');
-const workshopButton = requireElement<HTMLButtonElement>('#workshopButton');
-const arsenalButton = requireElement<HTMLButtonElement>('#arsenalButton');
-const canopyButton = requireElement<HTMLButtonElement>('#canopyButton');
-const resetButton = requireElement<HTMLButtonElement>('#resetButton');
 
 const inventorySlots: HTMLDivElement[] = [];
 for (let i = 0; i < INVENTORY_SLOTS; i++) {
@@ -371,7 +361,6 @@ function updateBuildingShopButtons() {
     button.classList.toggle('selected', type === selected);
   }
   buildingShopPanel.classList.toggle('hidden', !game.isBuildModeActive());
-  workshopButton.classList.toggle('selected', game.isBuildModeActive());
   updateBuildPrompt();
 }
 
@@ -468,9 +457,6 @@ function updateItemShopButtons(): void {
   }
   const shopVisible = isItemShopOpen && inDowntime;
   itemShopPanel.classList.toggle('hidden', !shopVisible);
-  arsenalButton.classList.toggle('selected', shopVisible);
-  arsenalButton.disabled = !inDowntime;
-  arsenalButton.classList.toggle('disabled', !inDowntime);
 }
 
 function updateHeroItems(force = false): void {
@@ -740,33 +726,6 @@ buildPrompt.addEventListener('mouseenter', () => {
 });
 
 buildPrompt.addEventListener('mouseleave', hideTooltip);
-
-workshopButton.addEventListener('click', () => {
-  setItemShopOpen(false);
-  game.toggleBuildMode();
-  updateBuildingShopButtons();
-  updateBuildPrompt();
-});
-
-arsenalButton.addEventListener('click', () => {
-  setItemShopOpen(!isItemShopOpen);
-});
-
-canopyButton.addEventListener('click', () => {
-  game.toggleCanopy();
-});
-
-resetButton.addEventListener('click', () => {
-  game.reset();
-  game.setCanvasHudEnabled(false);
-  focusCameraOnKnight({ zoom: INITIAL_CAMERA_ZOOM });
-  cameraPan.up = cameraPan.down = cameraPan.left = cameraPan.right = false;
-  updateInventory();
-  updateBuildingShopButtons();
-  setItemShopOpen(false);
-  updateItemShopButtons();
-  updateHeroItems(true);
-});
 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'F1') {
