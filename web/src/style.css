@@ -2,7 +2,9 @@
 
 :root {
   color-scheme: dark;
-  --game-size: 640px;
+  --game-min-size: 320px;
+  --game-max-size: 1024px;
+  --game-vertical-padding: 36px;
 }
 
 body {
@@ -17,7 +19,7 @@ body {
 #app {
   width: 100%;
   min-height: 100vh;
-  padding: 16px 18px 20px;
+  padding: 16px 0 20px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -39,10 +41,13 @@ body {
   overflow: hidden;
   min-height: 0;
   box-shadow: 0 0 20px rgba(0, 0, 0, 0.55);
-  width: var(--game-size);
-  height: var(--game-size);
-  max-width: 100%;
-  max-height: 100%;
+  width: clamp(
+    var(--game-min-size),
+    min(100vw, calc(100vh - var(--game-vertical-padding))),
+    var(--game-max-size)
+  );
+  aspect-ratio: 1 / 1;
+  height: auto;
   margin: 0 auto;
   align-self: center;
   justify-self: center;
