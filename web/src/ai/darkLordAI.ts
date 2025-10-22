@@ -2,8 +2,7 @@ import {
   CASTLE_POS,
   CHEAPEST_UNIT_COST,
   DARK_LORD_ENERGY_PER_SEC,
-  DARK_LORD_REVEAL_MEMORY,
-  DARK_LORD_SPAWN_INTERVAL,
+  MAX_UNITS,
   UNIT_STATS,
   UnitType
 } from '../config/constants';
@@ -13,28 +12,82 @@ import type { Game } from '../game';
 export class DarkLordAI {
   public evilEnergy = 0;
   private energyAccumulator = 0;
-  private spawnTimer = 0;
-  private knightRevealPos: Vector2 | null = null;
-  private knightRevealTimer = 0;
+  private lastDeployedWave = 0;
 
-  update(dt: number, game: Game): void {
+  update(dt: number, _game: Game): void {
     this.accumulateEnergy(dt);
-    this.decayReveal(dt);
+  }
 
-    this.spawnTimer += dt;
-    if (!game.isWaveActive()) {
-      this.spawnTimer = 0;
+  beginWave(game: Game, waveIndex: number): void {
+    if (waveIndex <= this.lastDeployedWave) {
       return;
     }
-    while (this.spawnTimer >= DARK_LORD_SPAWN_INTERVAL) {
-      this.spawnTimer -= DARK_LORD_SPAWN_INTERVAL;
-      this.trySpawn(game);
+    this.lastDeployedWave = waveIndex;
+
+    if (this.evilEnergy < CHEAPEST_UNIT_COST) {
+      return;
+    }
+
+    const composition = this.planWaveComposition(game, waveIndex);
+    if (!composition.length) {
+      return;
+    }
+
+    const rally = game.getWaveRallyPoint() ?? CASTLE_POS.clone();
+    for (const type of composition) {
+      if (!game.canSpawnMoreUnits()) {
+        break;
+      }
+      if (!this.spawnUnit(game, type, this.jitter(rally, 18))) {
+        break;
+      }
     }
   }
 
-  registerKnightReveal(position: Vector2): void {
-    this.knightRevealPos = position.clone();
-    this.knightRevealTimer = DARK_LORD_REVEAL_MEMORY;
+  registerKnightReveal(_position: Vector2): void {
+    // Wave deployments are pre-planned, so reactive spawns are ignored.
+  }
+
+  private planWaveComposition(game: Game, waveIndex: number): UnitType[] {
+    const lineup: UnitType[] = [];
+    let budget = this.evilEnergy;
+    if (budget < CHEAPEST_UNIT_COST) {
+      return lineup;
+    }
+
+    const capacity = Math.max(0, MAX_UNITS - game.getUnitCount());
+    if (capacity === 0) {
+      return lineup;
+    }
+
+    const tankGoal = Math.min(capacity, Math.max(1, Math.floor((waveIndex + 1) / 2)));
+    const priestGoal = Math.min(capacity, Math.max(1, Math.floor((waveIndex + 2) / 3)));
+    const scoutGoal = Math.min(capacity, Math.max(3, 4 + waveIndex));
+
+    const pushType = (type: UnitType, count: number) => {
+      for (let i = 0; i < count; i++) {
+        if (lineup.length >= capacity) {
+          return;
+        }
+        const cost = UNIT_STATS[type].cost;
+        if (budget < cost) {
+          return;
+        }
+        lineup.push(type);
+        budget -= cost;
+      }
+    };
+
+    pushType('tank', tankGoal);
+    pushType('priest', priestGoal);
+    pushType('scout', scoutGoal);
+
+    while (budget >= UNIT_STATS.scout.cost && lineup.length < capacity) {
+      lineup.push('scout');
+      budget -= UNIT_STATS.scout.cost;
+    }
+
+    return lineup;
   }
 
   private accumulateEnergy(dt: number): void {
@@ -44,93 +97,6 @@ export class DarkLordAI {
       this.evilEnergy += gained;
       this.energyAccumulator -= gained;
     }
-  }
-
-  private decayReveal(dt: number): void {
-    if (this.knightRevealTimer > 0) {
-      this.knightRevealTimer = Math.max(0, this.knightRevealTimer - dt);
-      if (this.knightRevealTimer === 0) {
-        this.knightRevealPos = null;
-      }
-    }
-  }
-
-  private trySpawn(game: Game): void {
-    if (this.evilEnergy < CHEAPEST_UNIT_COST) {
-      return;
-    }
-    if (!game.canSpawnMoreUnits()) {
-      return;
-    }
-
-    if (game.isAnySealChanneling()) {
-      this.spawnResponseForSeal(game);
-      return;
-    }
-
-    if (this.knightRevealPos && this.knightRevealTimer > 0) {
-      this.spawnResponseToReveal(game);
-      return;
-    }
-
-    if (game.isAnyVillageAlarmed()) {
-      if (this.spawnAlarmScout(game)) {
-        return;
-      }
-    }
-
-    this.spawnCoverageScout(game);
-  }
-
-  private spawnResponseForSeal(game: Game): void {
-    const seal = game.getChannelingSeal();
-    const target = seal?.pos ?? CASTLE_POS;
-    const spawnPoint = game.getCastleEdgePoint(target);
-
-    for (let i = 0; i < 2; i++) {
-      if (!this.spawnUnit(game, 'scout', this.jitter(spawnPoint, 12))) {
-        return;
-      }
-    }
-
-    this.spawnUnit(game, 'tank', this.jitter(spawnPoint, 16));
-  }
-
-  private spawnResponseToReveal(game: Game): void {
-    const location = this.knightRevealPos ?? CASTLE_POS;
-    const jittered = this.jitter(location, 18);
-    if (!this.spawnUnit(game, 'tank', jittered)) {
-      return;
-    }
-    this.spawnUnit(game, 'priest', this.jitter(location, 18));
-  }
-
-  private spawnCoverageScout(game: Game): void {
-    const anchor = this.chooseCoverageAnchor(game);
-    this.spawnUnit(game, 'scout', this.jitter(anchor, 14));
-    if (game.getActiveWatchtowerCount() >= 2 && this.canAfford('priest') && Math.random() < 0.6) {
-      this.spawnUnit(game, 'priest', this.jitter(anchor, 16));
-      return;
-    }
-    if (this.canAfford('scout') && Math.random() < 0.35) {
-      this.spawnUnit(game, 'scout', this.jitter(anchor, 18));
-    }
-  }
-
-  private spawnAlarmScout(game: Game): boolean {
-    const center = game.getAlarmedVillageCenter();
-    if (!center) {
-      return false;
-    }
-    const anchor = game.getNearestAnchorTo(center);
-    const primary = this.spawnUnit(game, 'scout', this.jitter(anchor, 12));
-    if (!primary) {
-      return false;
-    }
-    if (this.canAfford('scout') && Math.random() < 0.45) {
-      this.spawnUnit(game, 'scout', this.jitter(anchor, 18));
-    }
-    return true;
   }
 
   private spawnUnit(game: Game, type: UnitType, position: Vector2): boolean {
@@ -152,23 +118,8 @@ export class DarkLordAI {
   private jitter(position: Vector2, radius: number): Vector2 {
     const angle = Math.random() * Math.PI * 2;
     const distance = Math.random() * radius;
-    return position.clone().add(new Vector2(Math.cos(angle) * distance, Math.sin(angle) * distance));
-  }
-
-  private chooseCoverageAnchor(game: Game): Vector2 {
-    const beacons = game.getActiveBeacons();
-    if (beacons.length) {
-      let closest = beacons[0];
-      let closestDist = closest.position.distanceTo(CASTLE_POS);
-      for (let i = 1; i < beacons.length; i++) {
-        const distance = beacons[i].position.distanceTo(CASTLE_POS);
-        if (distance < closestDist) {
-          closest = beacons[i];
-          closestDist = distance;
-        }
-      }
-      return game.getNearestAnchorTo(closest.position);
-    }
-    return game.getNextAnchor();
+    return position
+      .clone()
+      .add(new Vector2(Math.cos(angle) * distance, Math.sin(angle) * distance));
   }
 }

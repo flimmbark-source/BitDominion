@@ -512,6 +512,21 @@ export class DarkUnit {
       this.updateWildIdle(dt, stats, dtRatio);
       return;
     }
+    const rallyPoint = game.getWaveRallyPoint();
+    if (rallyPoint) {
+      const distance = this.pos.distanceTo(rallyPoint);
+      const arrivalRadius = 18;
+      const maxSpeed = stats.maxSpeed * this.speedMultiplier;
+      const lerpScale = this.type === 'tank' ? UNIT_DETECTION_LERP * 0.55 : UNIT_DETECTION_LERP * 0.7;
+      if (distance > arrivalRadius) {
+        this.steerTowards(rallyPoint, maxSpeed, dtRatio, lerpScale, true);
+      } else {
+        const settleSpeed = Math.max(stats.minSpeed, maxSpeed * 0.45);
+        this.steerTowards(rallyPoint, settleSpeed, dtRatio, UNIT_DETECTION_LERP * 0.5);
+        this.velocity.scale(Math.max(0, 1 - dt * 1.4));
+      }
+      return;
+    }
     const anchor = game.getHighestSuspicionAnchor();
     let followingAnchor = false;
     if (anchor) {
