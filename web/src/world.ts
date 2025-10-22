@@ -179,6 +179,10 @@ export class World {
     return this.trees;
   }
 
+  getVillages(): readonly Village[] {
+    return this.villages;
+  }
+
   getHuts(): readonly Hut[] {
     return this.huts;
   }

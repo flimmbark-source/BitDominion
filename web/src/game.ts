@@ -71,10 +71,48 @@ import {
   WATCHTOWER_RANGE,
   WIDTH,
   WORKSHOP_AURA_RADIUS,
-  HUT_STEER_STRENGTH
+  HUT_STEER_STRENGTH,
+  DOWNTIME_DURATION,
+  WAVE_DURATION,
+  QUEST_COUNT,
+  QUEST_RADIUS,
+  QUEST_COMPLETION_TIME,
+  QUEST_REWARD_SUPPLIES,
+  QUEST_REWARD_BUFF_MULTIPLIER,
+  QUEST_REWARD_SPEED_BONUS,
+  CREEP_CAMPS_PER_DOWNTIME,
+  CREEP_PACK_SIZE,
+  CREEP_REWARD_SUPPLIES,
+  CREEP_REWARD_RELIC_SHARDS,
+  CREEP_UNIT_TYPES,
+  TEMP_BUFF_WAVE_DURATION,
+  THROWING_KNIFE_COOLDOWN,
+  THROWING_KNIFE_RANGE,
+  THROWING_KNIFE_DAMAGE,
+  POISON_DAGGER_DPS,
+  POISON_DAGGER_DURATION,
+  TORCH_ORBIT_COUNT,
+  TORCH_ORBIT_RADIUS,
+  TORCH_TICK_INTERVAL,
+  TORCH_TICK_DAMAGE,
+  INFERNO_RING_RADIUS,
+  INFERNO_RING_DPS,
+  CROSSBOW_CHARM_COOLDOWN,
+  CROSSBOW_CHARM_RANGE,
+  CROSSBOW_CHARM_DAMAGE,
+  REPEATING_ARBALEST_COOLDOWN,
+  REPEATING_ARBALEST_PIERCE,
+  SMOKE_BOMB_INTERVAL,
+  SMOKE_BOMB_RADIUS,
+  SMOKE_BOMB_DURATION,
+  SMOKE_BOMB_SLOW,
+  CLOAK_FIELD_RADIUS,
+  CLOAK_FIELD_SLOW,
+  CLOAK_FIELD_DURATION,
+  CLOAK_FIELD_CLOAK_TIME
 } from './config/constants';
 import { DarkLordAI } from './ai/darkLordAI';
-import { DarkUnit } from './entities/darkUnit';
+import { DarkUnit, DarkUnitAllegiance } from './entities/darkUnit';
 import {
   BuildingInstance,
   createBuilding,
@@ -123,6 +161,82 @@ interface KnightProjectile {
   velocity: Vector2;
   target: DarkUnit | null;
   damage: number;
+  source: ItemId;
+  pierce?: number;
+  effects?: {
+    dot?: { dps: number; duration: number };
+    slow?: { factor: number; duration: number };
+  };
+  tint?: string;
+}
+
+type GamePhase = 'downtime' | 'wave';
+type QuestType = 'escort' | 'retrieve';
+
+interface QuestReward {
+  supplies: number;
+  buff: TemporaryBuff | null;
+  description: string;
+}
+
+interface Quest {
+  id: number;
+  type: QuestType;
+  position: Vector2;
+  radius: number;
+  requiredTime: number;
+  progress: number;
+  state: 'available' | 'completed';
+  description: string;
+  icon: string;
+  reward: QuestReward;
+}
+
+interface CreepCamp {
+  id: number;
+  position: Vector2;
+  radius: number;
+  unitIds: number[];
+  cleared: boolean;
+  rewardSupplies: number;
+  rewardRelicShards: number;
+  name: string;
+}
+
+interface TemporaryBuff {
+  id: string;
+  description: string;
+  damageBonus?: number;
+  speedBonus?: number;
+  expiresAtWave: number;
+}
+
+interface WeaponRuntimeState {
+  id: ItemId;
+  cooldown: number;
+  evolved: boolean;
+  kills: number;
+  rescues: number;
+  data: Record<string, unknown>;
+}
+
+interface SmokeField {
+  id: number;
+  position: Vector2;
+  radius: number;
+  timer: number;
+  slowFactor: number;
+  cloakTimer: number;
+  baseDuration: number;
+}
+
+interface HeroLoadoutEntry {
+  id: ItemId;
+  name: string;
+  icon: string;
+  description: string;
+  status: string;
+  evolved: boolean;
 }
 
 export class Game {
@@ -157,15 +271,38 @@ export class Game {
   private readonly buildOrder: BuildingType[] = ['watchtower', 'barricade', 'spike', 'beacon', 'workshop'];
   private canvasHudEnabled = true;
   private ownedItems: Set<ItemId> = new Set();
+  private weaponStates: Map<ItemId, WeaponRuntimeState> = new Map();
+  private supportItems: Set<ItemId> = new Set();
+  private phase: GamePhase = 'downtime';
+  private phaseTimer = DOWNTIME_DURATION;
+  private waveIndex = 0;
+  private quests: Quest[] = [];
+  private creepCamps: CreepCamp[] = [];
+  private questIdCounter = 1;
+  private creepCampIdCounter = 1;
+  private temporaryBuffs: TemporaryBuff[] = [];
+  private weaponDamageBonus = 0;
+  private temporarySpeedBonus = 0;
+  private relicShards = 0;
+  private weaponOrbitVisuals: { position: Vector2; radius: number; alpha: number }[] = [];
+  private smokeFields: SmokeField[] = [];
+  private smokeFieldIdCounter = 1;
+  private unitLookup: Map<number, DarkUnit> = new Map();
+  private unitIdCounter = 1;
+  private totalKills = 0;
+  private rescueCount = 0;
+  private killMasteryBonus = 0;
+  private rescueMasteryBonus = 0;
+  private cloakTimer = 0;
 
   constructor() {
     this.world = new World();
     this.anchors = this._generateAnchors();
     this.seals = this._generateSeals();
-    this._spawnInitialUnits(5);
     this.shieldWasActive = this._isShieldActive();
     this.world.setBuildingObstacles([]);
     this._initializeKnightLoadout();
+    this._enterDowntime({ initial: true });
   }
 
   reset(): void {
@@ -193,11 +330,35 @@ export class Game {
     this.dismantleState = null;
     this.hasWorkshopTech = false;
     this.projectileIdCounter = 1;
+    this.knightProjectileIdCounter = 1;
     this._initializeKnightLoadout();
-    this._spawnInitialUnits(5);
     this.shieldWasActive = this._isShieldActive();
     this.shieldFlashTimer = 0;
     this.world.setBuildingObstacles([]);
+    this.weaponStates.clear();
+    this.supportItems.clear();
+    this.phase = 'downtime';
+    this.phaseTimer = DOWNTIME_DURATION;
+    this.waveIndex = 0;
+    this.quests = [];
+    this.creepCamps = [];
+    this.questIdCounter = 1;
+    this.creepCampIdCounter = 1;
+    this.temporaryBuffs = [];
+    this.weaponDamageBonus = 0;
+    this.temporarySpeedBonus = 0;
+    this.relicShards = 0;
+    this.weaponOrbitVisuals = [];
+    this.smokeFields = [];
+    this.smokeFieldIdCounter = 1;
+    this.unitLookup.clear();
+    this.unitIdCounter = 1;
+    this.totalKills = 0;
+    this.rescueCount = 0;
+    this.killMasteryBonus = 0;
+    this.rescueMasteryBonus = 0;
+    this.cloakTimer = 0;
+    this._enterDowntime({ initial: true });
   }
 
   setCanvasHudEnabled(enabled: boolean): void {
@@ -212,8 +373,65 @@ export class Game {
     return Array.from(this.ownedItems);
   }
 
+  getHeroLoadout(): HeroLoadoutEntry[] {
+    const entries: HeroLoadoutEntry[] = [];
+    for (const itemId of this.ownedItems) {
+      const definition = ITEM_DEFINITIONS[itemId];
+      if (!definition) {
+        continue;
+      }
+      const entry: HeroLoadoutEntry = {
+        id: itemId,
+        name: definition.name,
+        icon: definition.icon,
+        description: definition.description,
+        status: '',
+        evolved: false
+      };
+      if (definition.category === 'weapon') {
+        const state = this.weaponStates.get(itemId);
+        const requirement = definition.evolveRequirement;
+        if (state && requirement) {
+          const progress = requirement.type === 'kills' ? state.kills : state.rescues;
+          entry.status = `${Math.min(Math.floor(progress), requirement.count)}/${requirement.count} ${requirement.label}`;
+          entry.evolved = state.evolved;
+          if (state.evolved) {
+            entry.status = 'Evolved';
+          }
+        } else {
+          entry.status = 'Awakening';
+        }
+      } else {
+        entry.status = 'Passive';
+      }
+      entries.push(entry);
+    }
+    return entries;
+  }
+
   isItemOwned(itemId: ItemId): boolean {
     return this.ownedItems.has(itemId);
+  }
+
+  getQuests(): readonly Quest[] {
+    return this.quests;
+  }
+
+  getCreepCamps(): readonly CreepCamp[] {
+    return this.creepCamps;
+  }
+
+  getTemporaryBuffs(): readonly TemporaryBuff[] {
+    return this.temporaryBuffs;
+  }
+
+  getRelicShards(): number {
+    return this.relicShards;
+  }
+
+  getPhaseTimerInfo(): { phase: GamePhase; remaining: number; duration: number; waveIndex: number } {
+    const duration = this.phase === 'downtime' ? DOWNTIME_DURATION : WAVE_DURATION;
+    return { phase: this.phase, remaining: this.phaseTimer, duration, waveIndex: this.waveIndex };
   }
 
   canPurchaseItem(itemId: ItemId): boolean {
@@ -275,27 +493,51 @@ export class Game {
     return this._canAfford(type);
   }
 
+  getPhase(): GamePhase {
+    return this.phase;
+  }
+
+  isDowntime(): boolean {
+    return this.phase === 'downtime';
+  }
+
+  isWaveActive(): boolean {
+    return this.phase === 'wave';
+  }
+
   getDarkEnergy(): number {
     return this.darkLord.evilEnergy;
   }
 
   getUnitCount(): number {
-    return this.units.length;
+    return this.units.filter((unit) => unit.allegiance === 'dark' && unit.alive).length;
   }
 
   canSpawnMoreUnits(): boolean {
-    return this.units.length < MAX_UNITS;
+    return this._countDarkUnits() < MAX_UNITS;
   }
 
-  spawnUnit(type: UnitType, position: Vector2): boolean {
-    if (!this.canSpawnMoreUnits()) {
-      return false;
+  spawnUnit(
+    type: UnitType,
+    position: Vector2,
+    options?: { allegiance?: DarkUnitAllegiance; ignorePhase?: boolean }
+  ): DarkUnit | null {
+    const allegiance = options?.allegiance ?? 'dark';
+    if (allegiance === 'dark') {
+      if (!options?.ignorePhase && !this.isWaveActive()) {
+        return null;
+      }
+      if (!this.canSpawnMoreUnits()) {
+        return null;
+      }
     }
-    const castleSpawn = this.getCastleEdgePoint(position);
     const half = UNIT_STATS[type].size / 2;
-    const clamped = castleSpawn.clamp(half, half, WIDTH - half, HEIGHT - half);
-    this.units.push(new DarkUnit(clamped, type));
-    return true;
+    const spawnSource = allegiance === 'dark' ? this.getCastleEdgePoint(position) : position.clone();
+    const clamped = spawnSource.clamp(half, half, WIDTH - half, HEIGHT - half);
+    const unit = new DarkUnit(clamped, type, this.unitIdCounter++, allegiance);
+    this.units.push(unit);
+    this.unitLookup.set(unit.id, unit);
+    return unit;
   }
 
   getCastleEdgePoint(towards?: Vector2): Vector2 {
@@ -544,6 +786,7 @@ export class Game {
       return;
     }
 
+    this._updatePhase(dt);
     this._updateSupplies(dt);
     this.knight.update(dt, this.world);
     this._applyBarricadeSlowdown();
@@ -555,13 +798,15 @@ export class Game {
       unit.tryAttack(this.knight, this.world, this, dt);
     }
 
+    this._updateWeapons(dt);
     this.units = this.units.filter((unit) => unit.alive);
+    this._syncUnitLookup();
 
-    this._updateKnightBow();
     this._updateBuildings(dt);
     this._updateDismantle(dt);
     this._updateProjectiles(dt);
     this._updateKnightProjectiles(dt);
+    this._updateSmokeFields(dt);
 
     this.world.update(dt, {
       knight: this.knight,
@@ -583,12 +828,14 @@ export class Game {
         const died = unit.receiveArcHit(this.knight);
         if (wasAlive && died) {
           kills += 1;
+          this._onUnitKilled(unit);
         }
       }
       if (kills > 0) {
         this._emitNoise(this.knight.pos, NOISE_ATTACK_STRENGTH);
       }
       this.units = this.units.filter((unit) => unit.alive);
+      this._syncUnitLookup();
     }
 
     this.darkLord.update(dt, this);
@@ -629,6 +876,8 @@ export class Game {
 
     this._drawProjectiles(ctx);
     this._drawKnightProjectiles(ctx);
+    this._drawSmokeFields(ctx);
+    this._drawWeaponOrbits(ctx);
 
     this.knight.draw(ctx);
     this.knight.drawSwing(ctx);
@@ -655,10 +904,435 @@ export class Game {
     }
   }
 
-  private _spawnInitialUnits(count: number): void {
-    for (let i = 0; i < count; i++) {
-      this.spawnUnit('scout', CASTLE_POS);
+  private _enterDowntime(options?: { initial?: boolean }): void {
+    this.phase = 'downtime';
+    this.phaseTimer = DOWNTIME_DURATION;
+    this.weaponOrbitVisuals = [];
+    this.smokeFields = [];
+    this.cloakTimer = 0;
+    this._generateDowntimeActivities();
+  }
+
+  private _startWave(): void {
+    if (this.phase === 'wave') {
+      return;
     }
+    this.phase = 'wave';
+    this.phaseTimer = WAVE_DURATION;
+    this.waveIndex += 1;
+    this.quests = [];
+    this.creepCamps = [];
+    this.weaponOrbitVisuals = [];
+    this.smokeFields = [];
+    this._expireTemporaryBuffs();
+    this._removeRemainingWildUnits();
+  }
+
+  private _updatePhase(dt: number): void {
+    if (this.phase === 'downtime') {
+      this.phaseTimer = Math.max(0, this.phaseTimer - dt);
+      this._updateQuests(dt);
+      this._updateCreepCamps(dt);
+      if (this.phaseTimer <= 0) {
+        this._startWave();
+      }
+    } else {
+      this.phaseTimer = Math.max(0, this.phaseTimer - dt);
+      if (this.phaseTimer <= 0 && this._countDarkUnits() === 0) {
+        this._enterDowntime();
+      }
+    }
+  }
+
+  private _generateDowntimeActivities(): void {
+    this.quests = this._createQuests();
+    this.creepCamps = this._createCreepCamps();
+  }
+
+  private _createQuests(): Quest[] {
+    const quests: Quest[] = [];
+    for (let i = 0; i < QUEST_COUNT; i++) {
+      const type: QuestType = i % 2 === 0 ? 'escort' : 'retrieve';
+      const questId = this.questIdCounter++;
+      const position = this._chooseQuestLocation(type, i);
+      const reward = this._createQuestReward(type, questId);
+      quests.push({
+        id: questId,
+        type,
+        position,
+        radius: QUEST_RADIUS,
+        requiredTime: QUEST_COMPLETION_TIME,
+        progress: 0,
+        state: 'available',
+        description:
+          type === 'escort'
+            ? 'Escort the villagers back toward the sanctuary to earn their blessing.'
+            : 'Recover relic shards from the forest shrine before the next assault.',
+        icon: type === 'escort' ? '🛡️' : '🔮',
+        reward
+      });
+    }
+    return quests;
+  }
+
+  private _chooseQuestLocation(type: QuestType, index: number): Vector2 {
+    if (type === 'escort') {
+      const villages = this.world.getVillages();
+      if (villages.length) {
+        const village = villages[index % villages.length];
+        return village.center.clone();
+      }
+    }
+    if (type === 'retrieve') {
+      const trees = this.world.getTrees();
+      if (trees.length) {
+        const tree = trees[Math.floor(Math.random() * trees.length)];
+        return tree.position.clone();
+      }
+    }
+    return this._randomEncounterPoint();
+  }
+
+  private _createQuestReward(type: QuestType, questId: number): QuestReward {
+    const expiresAtWave = this.waveIndex + TEMP_BUFF_WAVE_DURATION;
+    if (type === 'escort') {
+      return {
+        supplies: QUEST_REWARD_SUPPLIES,
+        description: 'Fleetfoot blessing: temporary speed boost.',
+        buff: {
+          id: `speed-${questId}`,
+          description: 'Fleetfoot blessing (+speed until next wave)',
+          speedBonus: QUEST_REWARD_SPEED_BONUS,
+          expiresAtWave
+        }
+      };
+    }
+    return {
+      supplies: QUEST_REWARD_SUPPLIES,
+      description: 'Radiant oil: weapons burn brighter.',
+      buff: {
+        id: `damage-${questId}`,
+        description: 'Radiant oil (+weapon damage until next wave)',
+        damageBonus: QUEST_REWARD_BUFF_MULTIPLIER,
+        expiresAtWave
+      }
+    };
+  }
+
+  private _createCreepCamps(): CreepCamp[] {
+    const camps: CreepCamp[] = [];
+    for (let i = 0; i < CREEP_CAMPS_PER_DOWNTIME; i++) {
+      const campId = this.creepCampIdCounter++;
+      const position = this._randomEncounterPoint();
+      const radius = 52;
+      const packSize = Math.floor(
+        CREEP_PACK_SIZE[0] + Math.random() * (CREEP_PACK_SIZE[1] - CREEP_PACK_SIZE[0] + 1)
+      );
+      const unitIds: number[] = [];
+      for (let n = 0; n < packSize; n++) {
+        const angle = (Math.PI * 2 * n) / Math.max(1, packSize);
+        const distance = 12 + Math.random() * 18;
+        const spawnPos = position
+          .clone()
+          .add(new Vector2(Math.cos(angle) * distance, Math.sin(angle) * distance));
+        const type = CREEP_UNIT_TYPES[Math.floor(Math.random() * CREEP_UNIT_TYPES.length)];
+        const unit = this.spawnUnit(type, spawnPos, { allegiance: 'wild', ignorePhase: true });
+        if (unit) {
+          unitIds.push(unit.id);
+        }
+      }
+      camps.push({
+        id: campId,
+        position,
+        radius,
+        unitIds,
+        cleared: false,
+        rewardSupplies: CREEP_REWARD_SUPPLIES,
+        rewardRelicShards: CREEP_REWARD_RELIC_SHARDS,
+        name: `Roaming pack ${campId}`
+      });
+    }
+    return camps;
+  }
+
+  private _removeRemainingWildUnits(): void {
+    if (!this.units.length) {
+      return;
+    }
+    const survivors: DarkUnit[] = [];
+    for (const unit of this.units) {
+      if (unit.allegiance !== 'dark') {
+        this.unitLookup.delete(unit.id);
+        continue;
+      }
+      survivors.push(unit);
+    }
+    this.units = survivors;
+  }
+
+  private _updateQuests(dt: number): void {
+    if (!this.quests.length) {
+      return;
+    }
+    for (const quest of this.quests) {
+      if (quest.state === 'completed') {
+        continue;
+      }
+      const distance = quest.position.distanceTo(this.knight.pos);
+      if (distance <= quest.radius) {
+        quest.progress = Math.min(quest.requiredTime, quest.progress + dt);
+      } else {
+        quest.progress = Math.max(0, quest.progress - dt * 0.5);
+      }
+      if (quest.progress >= quest.requiredTime) {
+        this._completeQuest(quest);
+      }
+    }
+  }
+
+  private _completeQuest(quest: Quest): void {
+    if (quest.state === 'completed') {
+      return;
+    }
+    quest.state = 'completed';
+    quest.progress = quest.requiredTime;
+    this._addSupplies(quest.reward.supplies);
+    if (quest.reward.buff) {
+      this._addTemporaryBuff(quest.reward.buff);
+    }
+    this.rescueCount += 1;
+    this._recordRescueProgress(1 + this.rescueMasteryBonus);
+  }
+
+  private _recordRescueProgress(amount: number): void {
+    for (const state of this.weaponStates.values()) {
+      state.rescues += amount;
+      this._checkWeaponEvolution(state);
+    }
+  }
+
+  private _addTemporaryBuff(buff: TemporaryBuff): void {
+    this.temporaryBuffs.push(buff);
+    if (buff.damageBonus) {
+      this.weaponDamageBonus += buff.damageBonus;
+    }
+    if (buff.speedBonus) {
+      this.temporarySpeedBonus += buff.speedBonus;
+    }
+    this._applyTemporarySpeedBonus();
+  }
+
+  private _expireTemporaryBuffs(): void {
+    if (!this.temporaryBuffs.length) {
+      this._applyTemporarySpeedBonus();
+      return;
+    }
+    let damageAdjustment = 0;
+    let speedAdjustment = 0;
+    const survivors: TemporaryBuff[] = [];
+    for (const buff of this.temporaryBuffs) {
+      if (buff.expiresAtWave > this.waveIndex) {
+        survivors.push(buff);
+        continue;
+      }
+      if (buff.damageBonus) {
+        damageAdjustment += buff.damageBonus;
+      }
+      if (buff.speedBonus) {
+        speedAdjustment += buff.speedBonus;
+      }
+    }
+    this.temporaryBuffs = survivors;
+    if (damageAdjustment !== 0) {
+      this.weaponDamageBonus = Math.max(0, this.weaponDamageBonus - damageAdjustment);
+    }
+    if (speedAdjustment !== 0) {
+      this.temporarySpeedBonus = Math.max(0, this.temporarySpeedBonus - speedAdjustment);
+    }
+    this._applyTemporarySpeedBonus();
+  }
+
+  private _applyTemporarySpeedBonus(): void {
+    this.knight.setTemporarySpeedMultiplier(1 + this.temporarySpeedBonus);
+  }
+
+  private _updateCreepCamps(_dt: number): void {
+    if (!this.creepCamps.length) {
+      return;
+    }
+    for (const camp of this.creepCamps) {
+      if (camp.cleared) {
+        continue;
+      }
+      const survivors: number[] = [];
+      for (const id of camp.unitIds) {
+        const unit = this.unitLookup.get(id);
+        if (unit && unit.alive) {
+          survivors.push(id);
+        }
+      }
+      camp.unitIds = survivors;
+      if (!camp.unitIds.length) {
+        this._completeCreepCamp(camp);
+      }
+    }
+  }
+
+  private _completeCreepCamp(camp: CreepCamp): void {
+    if (camp.cleared) {
+      return;
+    }
+    camp.cleared = true;
+    this._addSupplies(camp.rewardSupplies);
+    this.relicShards += camp.rewardRelicShards;
+  }
+
+  private _updateWeapons(dt: number): void {
+    if (!this.weaponStates.size) {
+      return;
+    }
+    this.weaponOrbitVisuals = [];
+    for (const state of this.weaponStates.values()) {
+      switch (state.id) {
+        case 'throwingKnife':
+          this._updateThrowingKnife(state, dt);
+          break;
+        case 'torch':
+          this._updateTorch(state, dt);
+          break;
+        case 'crossbowCharm':
+          this._updateCrossbowCharm(state, dt);
+          break;
+        case 'smokeBombSatchel':
+          this._updateSmokeSatchel(state, dt);
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  private _updateThrowingKnife(state: WeaponRuntimeState, dt: number): void {
+    state.cooldown = Math.max(0, state.cooldown - dt);
+    const cadence = state.evolved ? THROWING_KNIFE_COOLDOWN * 0.75 : THROWING_KNIFE_COOLDOWN;
+    if (state.cooldown > 0) {
+      return;
+    }
+    const target = this._findNearestEnemy(THROWING_KNIFE_RANGE, { requireLineOfSight: false });
+    if (!target) {
+      return;
+    }
+    const toTarget = target.pos.clone().subtract(this.knight.pos);
+    if (toTarget.lengthSq() === 0) {
+      return;
+    }
+    toTarget.normalize();
+    const daggerCount = state.evolved ? 3 : 2;
+    const spread = state.evolved ? 0.25 : 0.18;
+    for (let i = 0; i < daggerCount; i++) {
+      const offset = (i - (daggerCount - 1) / 2) * spread;
+      const direction = this._rotateVector(toTarget, offset);
+      const velocity = direction.scale(THROWING_KNIFE_RANGE * 4.2);
+      const effects = state.evolved
+        ? { dot: { dps: POISON_DAGGER_DPS, duration: POISON_DAGGER_DURATION } }
+        : undefined;
+      this._spawnKnightProjectile({
+        position: this.knight.pos.clone(),
+        velocity,
+        damage: THROWING_KNIFE_DAMAGE,
+        source: 'throwingKnife',
+        effects,
+        tint: state.evolved ? '#8ef3a0' : '#facc15'
+      });
+    }
+    state.cooldown = cadence;
+  }
+
+  private _updateTorch(state: WeaponRuntimeState, dt: number): void {
+    const angle = (typeof state.data.angle === 'number' ? state.data.angle : 0) + dt * Math.PI * 0.9;
+    state.data.angle = angle;
+    const radius = state.evolved ? INFERNO_RING_RADIUS : TORCH_ORBIT_RADIUS;
+    const interval = TORCH_TICK_INTERVAL;
+    const tickTimer = (typeof state.data.tickTimer === 'number' ? state.data.tickTimer : 0) + dt;
+    state.data.tickTimer = tickTimer;
+    for (let i = 0; i < TORCH_ORBIT_COUNT; i++) {
+      const flameAngle = angle + (i / TORCH_ORBIT_COUNT) * Math.PI * 2;
+      const position = this.knight.pos.clone().add(
+        new Vector2(Math.cos(flameAngle) * radius, Math.sin(flameAngle) * radius)
+      );
+      this.weaponOrbitVisuals.push({ position, radius: 8, alpha: state.evolved ? 0.65 : 0.4 });
+    }
+    if (tickTimer < interval) {
+      return;
+    }
+    state.data.tickTimer = tickTimer - interval;
+    const baseDamage = TORCH_TICK_DAMAGE * (1 + this.weaponDamageBonus);
+    for (const unit of this.units) {
+      if (!unit.alive) {
+        continue;
+      }
+      if (unit.pos.distanceTo(this.knight.pos) <= radius + unit.getCollisionRadius()) {
+        unit.takeDamage(baseDamage);
+        if (!unit.alive) {
+          this._onUnitKilled(unit);
+        } else if (state.evolved) {
+          unit.applyDot(INFERNO_RING_DPS, interval * 2);
+        }
+      }
+    }
+  }
+
+  private _updateCrossbowCharm(state: WeaponRuntimeState, dt: number): void {
+    state.cooldown = Math.max(0, state.cooldown - dt);
+    const cadence = state.evolved ? REPEATING_ARBALEST_COOLDOWN : CROSSBOW_CHARM_COOLDOWN;
+    if (state.cooldown > 0) {
+      return;
+    }
+    const target = this._findNearestEnemy(CROSSBOW_CHARM_RANGE, { requireLineOfSight: true });
+    if (!target) {
+      return;
+    }
+    const toTarget = target.pos.clone().subtract(this.knight.pos);
+    if (toTarget.lengthSq() === 0) {
+      return;
+    }
+    toTarget.normalize();
+    const shots = state.evolved ? 2 : 1;
+    const spread = state.evolved ? 0.12 : 0;
+    for (let i = 0; i < shots; i++) {
+      const offset = spread * (i - (shots - 1) / 2);
+      const direction = this._rotateVector(toTarget, offset);
+      const velocity = direction.scale(CROSSBOW_CHARM_RANGE * 3.4);
+      this._spawnKnightProjectile({
+        position: this.knight.pos.clone(),
+        velocity,
+        damage: CROSSBOW_CHARM_DAMAGE,
+        source: 'crossbowCharm',
+        pierce: state.evolved ? REPEATING_ARBALEST_PIERCE : undefined,
+        tint: state.evolved ? '#c0f2ff' : '#fde68a',
+        target
+      });
+    }
+    this._emitNoise(this.knight.pos, KNIGHT_BOW_NOISE * 0.6);
+    state.cooldown = cadence;
+  }
+
+  private _updateSmokeSatchel(state: WeaponRuntimeState, dt: number): void {
+    state.cooldown = Math.max(0, state.cooldown - dt);
+    const interval = state.evolved ? Math.max(3, SMOKE_BOMB_INTERVAL - 1.5) : SMOKE_BOMB_INTERVAL;
+    if (state.cooldown > 0) {
+      return;
+    }
+    this.smokeFields.push({
+      id: this.smokeFieldIdCounter++,
+      position: this.knight.pos.clone(),
+      radius: state.evolved ? CLOAK_FIELD_RADIUS : SMOKE_BOMB_RADIUS,
+      timer: state.evolved ? CLOAK_FIELD_DURATION : SMOKE_BOMB_DURATION,
+      slowFactor: state.evolved ? CLOAK_FIELD_SLOW : SMOKE_BOMB_SLOW,
+      cloakTimer: state.evolved ? CLOAK_FIELD_CLOAK_TIME : 0,
+      baseDuration: state.evolved ? CLOAK_FIELD_DURATION : SMOKE_BOMB_DURATION
+    });
+    state.cooldown = interval;
   }
 
   private _generateAnchors(): PatrolAnchor[] {
@@ -672,6 +1346,101 @@ export class Game {
       anchors.push({ position, suspicion: 0 });
     }
     return anchors;
+  }
+
+  private _countDarkUnits(): number {
+    let count = 0;
+    for (const unit of this.units) {
+      if (unit.allegiance === 'dark' && unit.alive) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private _syncUnitLookup(): void {
+    for (const [id, unit] of this.unitLookup) {
+      if (!unit.alive) {
+        this.unitLookup.delete(id);
+      }
+    }
+  }
+
+  private _randomEncounterPoint(): Vector2 {
+    const margin = 70;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const point = new Vector2(
+        margin + Math.random() * (WIDTH - margin * 2),
+        margin + Math.random() * (HEIGHT - margin * 2)
+      );
+      if (point.distanceTo(CASTLE_POS) < 120) {
+        continue;
+      }
+      if (point.distanceTo(this.knight.pos) < 80) {
+        continue;
+      }
+      return point;
+    }
+    return new Vector2(WIDTH / 2, HEIGHT / 2);
+  }
+
+  private _findNearestEnemy(
+    range: number,
+    options?: { requireLineOfSight?: boolean }
+  ): DarkUnit | null {
+    const requireLine = options?.requireLineOfSight ?? false;
+    let nearest: DarkUnit | null = null;
+    let nearestDist = range;
+    for (const unit of this.units) {
+      if (!unit.alive) {
+        continue;
+      }
+      const distance = unit.pos.distanceTo(this.knight.pos);
+      if (distance > range || distance >= nearestDist) {
+        continue;
+      }
+      if (requireLine && !this.world.hasLineOfSight(this.knight.pos, unit.pos)) {
+        continue;
+      }
+      nearest = unit;
+      nearestDist = distance;
+    }
+    return nearest;
+  }
+
+  private _rotateVector(vector: Vector2, angle: number): Vector2 {
+    if (angle === 0) {
+      return vector.clone();
+    }
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return new Vector2(vector.x * cos - vector.y * sin, vector.x * sin + vector.y * cos);
+  }
+
+  private _onUnitKilled(unit: DarkUnit): void {
+    this.totalKills += 1;
+    for (const state of this.weaponStates.values()) {
+      state.kills += 1 + this.killMasteryBonus;
+      this._checkWeaponEvolution(state);
+    }
+  }
+
+  private _checkWeaponEvolution(state: WeaponRuntimeState): void {
+    if (state.evolved) {
+      return;
+    }
+    const definition = ITEM_DEFINITIONS[state.id];
+    const requirement = definition?.evolveRequirement;
+    if (!requirement) {
+      return;
+    }
+    const meetsRequirement =
+      (requirement.type === 'kills' && state.kills >= requirement.count) ||
+      (requirement.type === 'rescues' && state.rescues >= requirement.count);
+    if (meetsRequirement) {
+      state.evolved = true;
+      state.cooldown = 0;
+    }
   }
 
   private _increaseSuspicion(position: Vector2, amount: number): void {
@@ -1107,9 +1876,16 @@ export class Game {
 
   private _initializeKnightLoadout(): void {
     this.ownedItems.clear();
+    this.weaponStates.clear();
+    this.supportItems.clear();
+    this.weaponDamageBonus = 0;
+    this.temporarySpeedBonus = 0;
+    this.killMasteryBonus = 0;
+    this.rescueMasteryBonus = 0;
     this.knightProjectiles = [];
     this.knightProjectileIdCounter = 1;
-    this._grantItem('bow');
+    this.knight.setTemporarySpeedMultiplier(1);
+    this._grantItem('throwingKnife');
   }
 
   private _grantItem(itemId: ItemId): void {
@@ -1121,19 +1897,31 @@ export class Game {
       return;
     }
     this.ownedItems.add(itemId);
+    if (definition.category === 'weapon' && !this.weaponStates.has(itemId)) {
+      this.weaponStates.set(itemId, {
+        id: itemId,
+        cooldown: 0,
+        evolved: false,
+        kills: 0,
+        rescues: 0,
+        data: {}
+      });
+    }
+    if (definition.category === 'support') {
+      this.supportItems.add(itemId);
+    }
     this._applyItemEffect(itemId);
   }
 
   private _applyItemEffect(itemId: ItemId): void {
     switch (itemId) {
-      case 'bow':
-        this.knight.grantBow();
-        break;
       case 'scoutBoots':
         this.knight.addSpeedMultiplier(KNIGHT_SPEED_BOOST_MULTIPLIER);
+        this.rescueMasteryBonus += 1;
         break;
-      case 'lightQuiver':
-        this.knight.multiplyBowCooldown(KNIGHT_BOW_COOLDOWN_MULTIPLIER);
+      case 'hunterJerky':
+        this.weaponDamageBonus += 0.2;
+        this.killMasteryBonus += 0.25;
         break;
       default:
         break;
@@ -1390,6 +2178,44 @@ export class Game {
     this.projectiles = survivors;
   }
 
+  private _spawnKnightProjectile(options: {
+    position: Vector2;
+    velocity: Vector2;
+    damage: number;
+    source: ItemId;
+    pierce?: number;
+    effects?: KnightProjectile['effects'];
+    tint?: string;
+    target?: DarkUnit | null;
+  }): void {
+    const projectile: KnightProjectile = {
+      id: this.knightProjectileIdCounter++,
+      position: options.position.clone(),
+      velocity: options.velocity.clone(),
+      target: options.target ?? null,
+      damage: options.damage * (1 + this.weaponDamageBonus),
+      source: options.source,
+      pierce: options.pierce,
+      effects: options.effects,
+      tint: options.tint
+    };
+    this.knightProjectiles.push(projectile);
+  }
+
+  private _applyProjectileHit(projectile: KnightProjectile, unit: DarkUnit): void {
+    const wasAlive = unit.alive;
+    unit.takeDamage(projectile.damage);
+    if (projectile.effects?.dot) {
+      unit.applyDot(projectile.effects.dot.dps, projectile.effects.dot.duration);
+    }
+    if (projectile.effects?.slow) {
+      unit.applySlow(projectile.effects.slow.factor, projectile.effects.slow.duration);
+    }
+    if (wasAlive && !unit.alive) {
+      this._onUnitKilled(unit);
+    }
+  }
+
   private _updateKnightProjectiles(dt: number): void {
     if (!this.knightProjectiles.length) {
       return;
@@ -1412,23 +2238,25 @@ export class Game {
       projectile.position.add(direction.clone().scale(distance));
 
       const target = projectile.target;
+      let hit = false;
       if (
         target &&
         target.alive &&
         target.pos.distanceTo(projectile.position) <= target.getCollisionRadius() + 2.5
       ) {
-        target.takeDamage(projectile.damage);
-        if (!target.alive) {
-          this.units = this.units.filter((unit) => unit.alive);
+        this._applyProjectileHit(projectile, target);
+        hit = true;
+      } else {
+        const hitUnit = this._findKnightProjectileHit(projectile);
+        if (hitUnit) {
+          this._applyProjectileHit(projectile, hitUnit);
+          hit = true;
         }
-        continue;
       }
-
-      const hitUnit = this._findKnightProjectileHit(projectile);
-      if (hitUnit) {
-        hitUnit.takeDamage(projectile.damage);
-        if (!hitUnit.alive) {
-          this.units = this.units.filter((unit) => unit.alive);
+      if (hit) {
+        if (projectile.pierce && projectile.pierce > 0) {
+          projectile.pierce -= 1;
+          survivors.push(projectile);
         }
         continue;
       }
@@ -1462,49 +2290,32 @@ export class Game {
     return null;
   }
 
-  private _findBowTarget(): DarkUnit | null {
-    const range = this.knight.getBowRange();
-    let nearest: DarkUnit | null = null;
-    let nearestDist = range + 1;
-    for (const unit of this.units) {
-      if (!unit.alive) {
-        continue;
-      }
-      const distance = unit.pos.distanceTo(this.knight.pos);
-      if (distance > range || distance >= nearestDist) {
-        continue;
-      }
-      if (!this.world.hasLineOfSight(this.knight.pos, unit.pos)) {
-        continue;
-      }
-      nearest = unit;
-      nearestDist = distance;
+  private _updateSmokeFields(dt: number): void {
+    if (!this.smokeFields.length) {
+      return;
     }
-    return nearest;
+    const survivors: SmokeField[] = [];
+    for (const field of this.smokeFields) {
+      field.timer = Math.max(0, field.timer - dt);
+      field.cloakTimer = Math.max(0, field.cloakTimer - dt);
+      for (const unit of this.units) {
+        if (!unit.alive) {
+          continue;
+        }
+        if (unit.pos.distanceTo(field.position) <= field.radius) {
+          unit.applySlow(field.slowFactor, 0.6);
+          if (field.cloakTimer > 0) {
+            unit.detecting = false;
+          }
+        }
+      }
+      if (field.timer > 0) {
+        survivors.push(field);
+      }
+    }
+    this.smokeFields = survivors;
   }
 
-  private _updateKnightBow(): void {
-    if (!this.knight.hasBowEquipped()) {
-      return;
-    }
-    const target = this._findBowTarget();
-    if (!target) {
-      return;
-    }
-    const shot = this.knight.tryShootBow(target);
-    if (!shot) {
-      return;
-    }
-    const projectile: KnightProjectile = {
-      id: this.knightProjectileIdCounter++,
-      position: shot.position,
-      velocity: shot.velocity,
-      target,
-      damage: shot.damage
-    };
-    this.knightProjectiles.push(projectile);
-    this._emitNoise(this.knight.pos, KNIGHT_BOW_NOISE);
-  }
 
   private _drawKnightProjectiles(ctx: CanvasRenderingContext2D): void {
     if (!this.knightProjectiles.length) {
@@ -1529,6 +2340,36 @@ export class Game {
       ctx.stroke();
       ctx.beginPath();
       ctx.arc(projectile.position.x, projectile.position.y, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  private _drawSmokeFields(ctx: CanvasRenderingContext2D): void {
+    if (!this.smokeFields.length) {
+      return;
+    }
+    ctx.save();
+    for (const field of this.smokeFields) {
+      const progress = field.baseDuration > 0 ? field.timer / field.baseDuration : 0;
+      const alpha = Math.max(0, Math.min(0.45, progress * 0.45));
+      ctx.fillStyle = `rgba(148, 163, 184, ${alpha.toFixed(2)})`;
+      ctx.beginPath();
+      ctx.arc(field.position.x, field.position.y, field.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  private _drawWeaponOrbits(ctx: CanvasRenderingContext2D): void {
+    if (!this.weaponOrbitVisuals.length) {
+      return;
+    }
+    ctx.save();
+    for (const flame of this.weaponOrbitVisuals) {
+      ctx.fillStyle = `rgba(252, 211, 77, ${flame.alpha.toFixed(2)})`;
+      ctx.beginPath();
+      ctx.arc(flame.position.x, flame.position.y, flame.radius, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();

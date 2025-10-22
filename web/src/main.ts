@@ -38,8 +38,6 @@ const BUILDING_DISPLAY: Record<BuildingType, { icon: string; name: string; descr
 };
 
 const INVENTORY_SLOTS = 6;
-const CYCLE_LENGTH = 120;
-
 const INITIAL_CAMERA_ZOOM = 1.25;
 const MIN_CAMERA_ZOOM = 0.75;
 const MAX_CAMERA_ZOOM = 2.5;
@@ -86,6 +84,10 @@ appRoot.innerHTML = `
             <span class="stat-value" id="heroGoldText">0</span>
           </div>
           <div class="stat-row">
+            <span class="stat-label shards">Relic Shards</span>
+            <span class="stat-value" id="heroShardText">0</span>
+          </div>
+          <div class="stat-row">
             <span class="stat-label health">Health</span>
             <div class="health-bar">
               <div class="health-bar-fill" id="heroHealthBar"></div>
@@ -97,6 +99,21 @@ appRoot.innerHTML = `
         <div class="ui-panel hero-items" id="heroItemsPanel">
           <div class="hero-items-title">Hero Gear</div>
           <div class="hero-items-grid" id="heroItemsContainer"></div>
+        </div>
+        <div class="ui-panel activities" id="activitiesPanel">
+          <div class="activities-title">Downtime Briefing</div>
+          <div class="activities-section">
+            <h3>Quests</h3>
+            <ul class="activities-list" id="questList"></ul>
+          </div>
+          <div class="activities-section">
+            <h3>Creep Camps</h3>
+            <ul class="activities-list" id="campList"></ul>
+          </div>
+          <div class="activities-section">
+            <h3>Temporary Blessings</h3>
+            <ul class="activities-list" id="buffList"></ul>
+          </div>
         </div>
       </div>
       <div class="shop-panel ui-panel hidden" id="buildingShopPanel">
@@ -159,11 +176,16 @@ game.setCanvasHudEnabled(false);
 const tooltipPanel = requireElement<HTMLDivElement>('#tooltipPanel');
 const inventoryPanel = requireElement<HTMLDivElement>('#inventoryPanel');
 const heroGoldText = requireElement<HTMLSpanElement>('#heroGoldText');
+const heroShardText = requireElement<HTMLSpanElement>('#heroShardText');
 const heroHealthBar = requireElement<HTMLDivElement>('#heroHealthBar');
 const heroHealthText = requireElement<HTMLSpanElement>('#heroHealthText');
 const darkEnergyFill = requireElement<HTMLDivElement>('#darkEnergyFill');
 const darkEnergyText = requireElement<HTMLParagraphElement>('#darkEnergyText');
 const heroItemsContainer = requireElement<HTMLDivElement>('#heroItemsContainer');
+const questList = requireElement<HTMLUListElement>('#questList');
+const campList = requireElement<HTMLUListElement>('#campList');
+const buffList = requireElement<HTMLUListElement>('#buffList');
+const activitiesPanel = requireElement<HTMLDivElement>('#activitiesPanel');
 const buildingShopPanel = requireElement<HTMLDivElement>('#buildingShopPanel');
 const buildingShopItemsContainer = requireElement<HTMLDivElement>('#shopItemsContainer');
 const itemShopPanel = requireElement<HTMLDivElement>('#itemShopPanel');
@@ -194,6 +216,19 @@ function showTooltip(title: string, body: string) {
 
 function hideTooltip() {
   tooltipPanel.style.display = 'none';
+}
+
+function formatTimer(seconds: number): string {
+  const clamped = Math.max(0, seconds);
+  if (clamped < 10) {
+    return `${clamped.toFixed(1)}s`;
+  }
+  const minutes = Math.floor(clamped / 60);
+  const secs = Math.floor(clamped % 60);
+  if (minutes <= 0) {
+    return `${secs}s`;
+  }
+  return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
 document.addEventListener('pointermove', (event) => {
@@ -283,17 +318,23 @@ function updateBuildingShopButtons() {
 
 let isItemShopOpen = false;
 let lastHeroItemsKey = '';
+let lastPhase: 'downtime' | 'wave' | null = null;
 
 function setItemShopOpen(open: boolean): void {
-  if (isItemShopOpen === open) {
+  const nextState = open && game.isDowntime();
+  if (isItemShopOpen === nextState) {
+    if (!nextState) {
+      hideTooltip();
+    }
+    updateItemShopButtons();
     return;
   }
-  isItemShopOpen = open;
-  if (open && game.isBuildModeActive()) {
+  isItemShopOpen = nextState;
+  if (isItemShopOpen && game.isBuildModeActive()) {
     game.setBuildMode(false);
     updateBuildingShopButtons();
   }
-  if (!open) {
+  if (!isItemShopOpen) {
     hideTooltip();
   }
   updateItemShopButtons();
@@ -322,44 +363,144 @@ function populateItemShop(): void {
 }
 
 function updateItemShopButtons(): void {
+  const inDowntime = game.isDowntime();
   for (const [itemId, button] of itemButtons.entries()) {
     const definition = ITEM_DEFINITIONS[itemId];
     const owned = game.isItemOwned(itemId);
     const canPurchase = game.canPurchaseItem(itemId);
     const priceSpan = button.querySelector<HTMLSpanElement>('.price');
     if (priceSpan) {
-      priceSpan.textContent = owned ? 'Owned' : `${definition.cost} Supplies`;
+      if (owned) {
+        priceSpan.textContent = 'Owned';
+      } else if (!inDowntime) {
+        priceSpan.textContent = 'Closed during wave';
+      } else {
+        priceSpan.textContent = `${definition.cost} Supplies`;
+      }
     }
-    button.classList.toggle('disabled', !canPurchase);
+    const disabled = owned || !canPurchase || !inDowntime;
+    button.disabled = disabled;
+    const shouldShowDisabledClass = !owned && (!canPurchase || !inDowntime);
+    button.classList.toggle('disabled', shouldShowDisabledClass);
     button.classList.toggle('owned', owned);
   }
-  itemShopPanel.classList.toggle('hidden', !isItemShopOpen);
-  arsenalButton.classList.toggle('selected', isItemShopOpen);
+  const shopVisible = isItemShopOpen && inDowntime;
+  itemShopPanel.classList.toggle('hidden', !shopVisible);
+  arsenalButton.classList.toggle('selected', shopVisible);
+  arsenalButton.disabled = !inDowntime;
+  arsenalButton.classList.toggle('disabled', !inDowntime);
 }
 
 function updateHeroItems(force = false): void {
-  const items = game.getOwnedItems();
-  const key = items.join('|');
+  const loadout = game.getHeroLoadout();
+  const key = loadout.map((entry) => `${entry.id}:${entry.status}:${entry.evolved}`).join('|');
   if (!force && key === lastHeroItemsKey) {
     return;
   }
   lastHeroItemsKey = key;
   heroItemsContainer.innerHTML = '';
-  if (!items.length) {
+  if (!loadout.length) {
     const empty = document.createElement('div');
     empty.className = 'hero-item hero-item-empty';
     empty.textContent = 'None';
     heroItemsContainer.appendChild(empty);
     return;
   }
-  for (const itemId of items) {
-    const definition = ITEM_DEFINITIONS[itemId];
+  for (const entry of loadout) {
     const itemElement = document.createElement('div');
-    itemElement.className = 'hero-item';
-    itemElement.innerHTML = `<span class="item-icon">${definition.icon}</span>`;
-    itemElement.addEventListener('mouseenter', () => showTooltip(definition.name, definition.description));
+    itemElement.className = `hero-item${entry.evolved ? ' hero-item-evolved' : ''}`;
+    itemElement.innerHTML = `<span class="item-icon">${entry.icon}</span><div class="hero-item-status">${entry.status}</div>`;
+    itemElement.addEventListener('mouseenter', () => showTooltip(entry.name, entry.description));
     itemElement.addEventListener('mouseleave', hideTooltip);
     heroItemsContainer.appendChild(itemElement);
+  }
+}
+
+function renderActivities(): void {
+  renderQuests();
+  renderCamps();
+  renderBuffs();
+}
+
+function renderQuests(): void {
+  const quests = game.getQuests();
+  questList.innerHTML = '';
+  if (!quests.length) {
+    const empty = document.createElement('li');
+    empty.className = 'activity-empty';
+    empty.textContent = 'No quests available.';
+    questList.appendChild(empty);
+    return;
+  }
+  for (const quest of quests) {
+    const li = document.createElement('li');
+    li.className = `activity-item ${quest.state}`;
+    const progressRatio = quest.requiredTime > 0 ? Math.min(1, quest.progress / quest.requiredTime) : 0;
+    const rewardText = quest.state === 'completed'
+      ? 'Completed'
+      : `${quest.reward.supplies} gold • ${quest.reward.description}`;
+    li.innerHTML = `
+      <span class="activity-icon">${quest.icon}</span>
+      <div class="activity-body">
+        <div class="activity-title">${quest.description}</div>
+        <div class="activity-subtext">${rewardText}</div>
+        <div class="activity-progress"><span style="width:${progressRatio * 100}%"></span></div>
+      </div>
+    `;
+    questList.appendChild(li);
+  }
+}
+
+function renderCamps(): void {
+  const camps = game.getCreepCamps();
+  campList.innerHTML = '';
+  if (!camps.length) {
+    const empty = document.createElement('li');
+    empty.className = 'activity-empty';
+    empty.textContent = 'Scouts report no roaming packs.';
+    campList.appendChild(empty);
+    return;
+  }
+  for (const camp of camps) {
+    const li = document.createElement('li');
+    li.className = `activity-item ${camp.cleared ? 'completed' : ''}`;
+    const remaining = camp.unitIds.length;
+    const shardLabel = camp.rewardRelicShards === 1 ? 'shard' : 'shards';
+    const status = camp.cleared
+      ? 'Cleared'
+      : `${remaining} foes remain • ${camp.rewardSupplies} gold & ${camp.rewardRelicShards} ${shardLabel}`;
+    li.innerHTML = `
+      <span class="activity-icon">🐾</span>
+      <div class="activity-body">
+        <div class="activity-title">${camp.name}</div>
+        <div class="activity-subtext">${status}</div>
+      </div>
+    `;
+    campList.appendChild(li);
+  }
+}
+
+function renderBuffs(): void {
+  const buffs = game.getTemporaryBuffs();
+  buffList.innerHTML = '';
+  if (!buffs.length) {
+    const empty = document.createElement('li');
+    empty.className = 'activity-empty';
+    empty.textContent = 'No active blessings.';
+    buffList.appendChild(empty);
+    return;
+  }
+  for (const buff of buffs) {
+    const li = document.createElement('li');
+    li.className = 'activity-item';
+    li.innerHTML = `
+      <span class="activity-icon">✨</span>
+      <div class="activity-body">
+        <div class="activity-title">${buff.description}</div>
+        <div class="activity-subtext">Expires after wave ${buff.expiresAtWave}</div>
+      </div>
+    `;
+    buffList.appendChild(li);
   }
 }
 
@@ -497,45 +638,37 @@ window.addEventListener('keydown', (event) => {
   }
 });
 
-function computePhase(energy: number): 'GATHERING' | 'QUEST' | 'WAVE' | 'REST' {
-  if (game.state !== 'running') {
-    return 'REST';
-  }
-  if (game.getUnitCount() >= 12) {
-    return 'WAVE';
-  }
-  if (game.isAnyVillageAlarmed() || game.isAnySealChanneling()) {
-    return 'QUEST';
-  }
-  const energyInCycle = energy % CYCLE_LENGTH;
-  if (energyInCycle > CYCLE_LENGTH * 0.75) {
-    return 'REST';
-  }
-  return 'GATHERING';
-}
-
 function updateHud() {
   heroGoldText.textContent = `${game.getSupplies()}`;
+  heroShardText.textContent = `${game.getRelicShards()}`;
   const hp = Math.max(0, game.knight.hp);
   const hpRatio = Math.max(0, Math.min(1, hp / KNIGHT_HP));
   heroHealthBar.style.width = `${hpRatio * 100}%`;
   heroHealthText.textContent = `${Math.ceil(hp)}/${KNIGHT_HP}`;
 
-  const energy = game.getDarkEnergy();
-  const cycle = Math.max(1, Math.floor(energy / CYCLE_LENGTH) + 1);
-  const energyInCycle = energy % CYCLE_LENGTH;
-  const phase = computePhase(energy);
-  const fillRatio = Math.max(0, Math.min(1, energyInCycle / CYCLE_LENGTH));
-  darkEnergyFill.style.width = `${fillRatio * 100}%`;
-  const phaseText =
-    phase === 'WAVE'
-      ? '⚔️ Dark wave in progress!'
-      : phase === 'QUEST'
-      ? 'Quests & incursions active'
-      : phase === 'REST'
-      ? 'Rest & rebuild'
-      : 'Gathering energy…';
-  darkEnergyText.textContent = `Cycle ${cycle}: ${phaseText}`;
+  const { phase, remaining, duration, waveIndex } = game.getPhaseTimerInfo();
+  const progress = duration > 0 ? 1 - Math.max(0, Math.min(1, remaining / duration)) : 1;
+  darkEnergyFill.style.width = `${progress * 100}%`;
+  let phaseText: string;
+  if (phase === 'downtime') {
+    const nextWave = waveIndex + 1;
+    phaseText = `Downtime: Wave ${nextWave} begins in ${formatTimer(remaining)}`;
+  } else {
+    if (remaining > 0) {
+      phaseText = `Wave ${waveIndex} underway — ${formatTimer(remaining)} remaining`;
+    } else {
+      phaseText = `Wave ${waveIndex} underway — clear remaining forces!`;
+    }
+  }
+  darkEnergyText.textContent = phaseText;
+  activitiesPanel.classList.toggle('wave-active', phase === 'wave');
+
+  if (lastPhase !== phase) {
+    if (phase === 'wave') {
+      setItemShopOpen(false);
+    }
+    lastPhase = phase;
+  }
 
   const showOverlay = game.state === 'victory' || game.state === 'defeat';
   gameOverScreen.classList.toggle('hidden', !showOverlay);
@@ -555,6 +688,7 @@ function updateHud() {
   updateBuildingShopButtons();
   updateItemShopButtons();
   updateHeroItems();
+  renderActivities();
 }
 
 const ctx = context;

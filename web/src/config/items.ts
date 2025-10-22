@@ -1,4 +1,8 @@
-export type ItemId = 'bow' | 'scoutBoots' | 'lightQuiver';
+export type WeaponItemId = 'throwingKnife' | 'torch' | 'crossbowCharm' | 'smokeBombSatchel';
+export type SupportItemId = 'scoutBoots' | 'hunterJerky';
+export type ItemId = WeaponItemId | SupportItemId;
+
+export type ItemCategory = 'weapon' | 'support';
 
 export interface ItemDefinition {
   readonly id: ItemId;
@@ -7,33 +11,86 @@ export interface ItemDefinition {
   readonly cost: number;
   readonly icon: string;
   readonly unique?: boolean;
+  readonly category: ItemCategory;
+  readonly evolveRequirement?: {
+    readonly type: 'kills' | 'rescues';
+    readonly count: number;
+    readonly label: string;
+  };
 }
 
 export const ITEM_DEFINITIONS: Record<ItemId, ItemDefinition> = {
-  bow: {
-    id: 'bow',
-    name: 'Waywatch Bow',
-    description: 'Grants the knight a ranged attack. You begin the mission with this heirloom.',
-    cost: 0,
-    icon: '🏹',
-    unique: true
-  },
   scoutBoots: {
     id: 'scoutBoots',
     name: 'Scout Boots',
-    description: 'Soft leather boots that increase the knight\'s stride and movement speed by 15%.',
-    cost: 40,
+    description:
+      'Supple leather boots that increase stride speed by 15% and convert each completed quest into bonus weapon mastery.',
+    cost: 55,
     icon: '🥾',
-    unique: true
+    unique: true,
+    category: 'support'
   },
-  lightQuiver: {
-    id: 'lightQuiver',
-    name: 'Featherlight Quiver',
-    description: 'Balanced arrows and a lighter draw reduce bow cooldown by 30%.',
+  hunterJerky: {
+    id: 'hunterJerky',
+    name: 'Hunter Jerky',
+    description:
+      'Smoked stag strips that harden resolve. Grants +20% weapon damage and adds a kill streak bonus toward evolutions.',
+    cost: 60,
+    icon: '🥩',
+    unique: true,
+    category: 'support'
+  },
+  throwingKnife: {
+    id: 'throwingKnife',
+    name: 'Throwing Knife',
+    description:
+      'Automatic flurry of forward daggers. Evolves into Poison Daggers after 25 kills, applying venom over time.',
+    cost: 0,
+    icon: '🔪',
+    unique: true,
+    category: 'weapon',
+    evolveRequirement: { type: 'kills', count: 25, label: 'Knife kills' }
+  },
+  torch: {
+    id: 'torch',
+    name: 'Ember Torch',
+    description:
+      'A trio of flames orbit the hero, scorching nearby foes. Complete 3 rescues to upgrade into the Inferno Ring.',
+    cost: 35,
+    icon: '🔥',
+    unique: true,
+    category: 'weapon',
+    evolveRequirement: { type: 'rescues', count: 3, label: 'Village rescues' }
+  },
+  crossbowCharm: {
+    id: 'crossbowCharm',
+    name: 'Crossbow Charm',
+    description:
+      'Summons an ethereal arbalest that shoots the nearest enemy. Score 35 kills to craft the Repeating Arbalest.',
+    cost: 70,
+    icon: '🏹',
+    unique: true,
+    category: 'weapon',
+    evolveRequirement: { type: 'kills', count: 35, label: 'Charm kills' }
+  },
+  smokeBombSatchel: {
+    id: 'smokeBombSatchel',
+    name: 'Smoke Bomb Satchel',
+    description:
+      'Periodic smoke clouds slow pursuers. Complete 4 rescues to weave cloaking fields around the hero.',
     cost: 45,
-    icon: '🎯',
-    unique: true
+    icon: '💨',
+    unique: true,
+    category: 'weapon',
+    evolveRequirement: { type: 'rescues', count: 4, label: 'Rescued villagers' }
   }
 };
 
-export const ITEM_ORDER: readonly ItemId[] = ['bow', 'scoutBoots', 'lightQuiver'];
+export const ITEM_ORDER: readonly ItemId[] = [
+  'throwingKnife',
+  'torch',
+  'crossbowCharm',
+  'smokeBombSatchel',
+  'scoutBoots',
+  'hunterJerky'
+];
