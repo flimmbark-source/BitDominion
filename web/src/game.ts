@@ -324,6 +324,7 @@ export class Game {
   private rescueCount = 0;
   private killMasteryBonus = 0;
   private rescueMasteryBonus = 0;
+  private waveRallyPoint: Vector2 | null = null;
 
   constructor() {
     this.world = new World();
@@ -389,6 +390,7 @@ export class Game {
     this.rescueCount = 0;
     this.killMasteryBonus = 0;
     this.rescueMasteryBonus = 0;
+    this.waveRallyPoint = null;
     this._enterDowntime();
   }
 
@@ -616,6 +618,14 @@ export class Game {
 
   getUnitCount(): number {
     return this.units.filter((unit) => unit.allegiance === 'dark' && unit.alive).length;
+  }
+
+  getWaveIndex(): number {
+    return this.waveIndex;
+  }
+
+  getWaveRallyPoint(): Vector2 | null {
+    return this.waveRallyPoint ? this.waveRallyPoint.clone() : null;
   }
 
   canSpawnMoreUnits(): boolean {
@@ -1027,6 +1037,7 @@ export class Game {
     this.phaseTimer = DOWNTIME_DURATION;
     this.weaponOrbitVisuals = [];
     this.smokeFields = [];
+    this.waveRallyPoint = null;
     this._generateDowntimeActivities();
   }
 
@@ -1042,6 +1053,8 @@ export class Game {
     this.smokeFields = [];
     this._expireTemporaryBuffs();
     this._removeRemainingWildUnits();
+    this.waveRallyPoint = this._chooseWaveRallyPoint();
+    this.darkLord.beginWave(this, this.waveIndex);
   }
 
   private _updatePhase(dt: number): void {
@@ -1197,6 +1210,15 @@ export class Game {
         expiresAtWave
       }
     };
+  }
+
+  private _chooseWaveRallyPoint(): Vector2 {
+    const villages = this.world.getVillages();
+    if (!villages.length) {
+      return CASTLE_POS.clone();
+    }
+    const index = (this.waveIndex - 1) % villages.length;
+    return villages[index].center.clone();
   }
 
   private _createCreepCamps(): CreepCamp[] {
