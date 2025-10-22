@@ -1,5 +1,5 @@
 import './style.css';
-import { Game } from './game';
+import { Game, CameraState } from './game';
 import {
   HEIGHT,
   WIDTH,
@@ -38,6 +38,10 @@ const BUILDING_DISPLAY: Record<BuildingType, { icon: string; name: string; descr
 
 const INVENTORY_SLOTS = 6;
 const CYCLE_LENGTH = 120;
+
+const INITIAL_CAMERA_ZOOM = 1.25;
+const MIN_CAMERA_ZOOM = 0.75;
+const MAX_CAMERA_ZOOM = 2.5;
 
 const appRoot = document.querySelector<HTMLDivElement>('#app');
 if (!appRoot) {
@@ -110,6 +114,34 @@ const context = canvas.getContext('2d');
 if (!context) {
   throw new Error('Unable to create canvas rendering context');
 }
+
+const camera = {
+  center: { x: WIDTH / 2, y: HEIGHT / 2 },
+  zoom: INITIAL_CAMERA_ZOOM
+};
+
+function clampCamera() {
+  const halfViewWidth = (canvas.width / camera.zoom) / 2;
+  const halfViewHeight = (canvas.height / camera.zoom) / 2;
+
+  const minX = halfViewWidth;
+  const maxX = WIDTH - halfViewWidth;
+  if (minX > maxX) {
+    camera.center.x = WIDTH / 2;
+  } else {
+    camera.center.x = Math.max(minX, Math.min(maxX, camera.center.x));
+  }
+
+  const minY = halfViewHeight;
+  const maxY = HEIGHT - halfViewHeight;
+  if (minY > maxY) {
+    camera.center.y = HEIGHT / 2;
+  } else {
+    camera.center.y = Math.max(minY, Math.min(maxY, camera.center.y));
+  }
+}
+
+clampCamera();
 
 const game = new Game();
 game.setCanvasHudEnabled(false);
@@ -237,7 +269,9 @@ populateShop();
 updateInventory();
 updateShopButtons();
 
-const toCanvasCoords = (event: PointerEvent) => {
+type CanvasInteractionEvent = PointerEvent | WheelEvent;
+
+const getCanvasPixelCoords = (event: CanvasInteractionEvent) => {
   const rect = canvas.getBoundingClientRect();
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;
@@ -246,8 +280,23 @@ const toCanvasCoords = (event: PointerEvent) => {
   return { x, y };
 };
 
+const screenToWorld = (x: number, y: number) => {
+  const worldX = (x - canvas.width / 2) / camera.zoom + camera.center.x;
+  const worldY = (y - canvas.height / 2) / camera.zoom + camera.center.y;
+  return { x: worldX, y: worldY };
+};
+
+const toWorldCoords = (event: PointerEvent) => {
+  const { x, y } = getCanvasPixelCoords(event);
+  const { x: worldX, y: worldY } = screenToWorld(x, y);
+  return {
+    x: Math.max(0, Math.min(WIDTH, worldX)),
+    y: Math.max(0, Math.min(HEIGHT, worldY))
+  };
+};
+
 canvas.addEventListener('pointerdown', (event) => {
-  const { x, y } = toCanvasCoords(event);
+  const { x, y } = toWorldCoords(event);
   if (event.button === 2) {
     event.preventDefault();
   }
@@ -255,9 +304,33 @@ canvas.addEventListener('pointerdown', (event) => {
 });
 
 canvas.addEventListener('pointermove', (event) => {
-  const { x, y } = toCanvasCoords(event);
+  const { x, y } = toWorldCoords(event);
   game.onPointerMove(x, y);
 });
+
+canvas.addEventListener(
+  'wheel',
+  (event) => {
+    event.preventDefault();
+    const { x, y } = getCanvasPixelCoords(event);
+    const focus = screenToWorld(x, y);
+    const zoomFactor = Math.exp(-event.deltaY * 0.001);
+    const nextZoom = Math.max(MIN_CAMERA_ZOOM, Math.min(MAX_CAMERA_ZOOM, camera.zoom * zoomFactor));
+    if (nextZoom === camera.zoom) {
+      return;
+    }
+
+    camera.zoom = nextZoom;
+
+    const offsetX = x - canvas.width / 2;
+    const offsetY = y - canvas.height / 2;
+    camera.center.x = focus.x - offsetX / camera.zoom;
+    camera.center.y = focus.y - offsetY / camera.zoom;
+
+    clampCamera();
+  },
+  { passive: false }
+);
 
 canvas.addEventListener('contextmenu', (event) => {
   event.preventDefault();
@@ -371,7 +444,13 @@ function frame(now: number) {
   const dt = Math.min((now - lastTime) / 1000, 0.2);
   lastTime = now;
   game.update(dt);
-  game.draw(ctx);
+  const cameraState: CameraState = {
+    center: camera.center,
+    zoom: camera.zoom,
+    viewportWidth: canvas.width,
+    viewportHeight: canvas.height
+  };
+  game.draw(ctx, cameraState);
   updateHud();
   requestAnimationFrame(frame);
 }
