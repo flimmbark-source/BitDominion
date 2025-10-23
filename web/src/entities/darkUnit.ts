@@ -24,7 +24,10 @@ import {
   ENEMY_BUILDING_TARGET_RANGE,
   ENEMY_BUILDING_TARGET_CHANCE,
   ENEMY_BUILDING_FOCUS_TIME,
-  MONSTER_LAIR_RADIUS
+  MONSTER_LAIR_RADIUS,
+  ENEMY_PROJECTILE_MAX_DISTANCE,
+  ENEMY_PROJECTILE_RADIUS,
+  ENEMY_PROJECTILE_SPEED
 } from '../config/constants';
 import { Vector2 } from '../math/vector2';
 import { mixColors } from '../utils/color';
@@ -352,6 +355,20 @@ export class DarkUnit {
     this.lastAttackTarget = targetPos.clone();
     this.lastAttackOrigin = this.pos.clone();
 
+    if (isRanged) {
+      const direction = targetPos.clone().subtract(this.pos);
+      game.spawnDarkProjectile({
+        position: this.pos,
+        direction,
+        damage: stats.attackDamage,
+        speed: ENEMY_PROJECTILE_SPEED,
+        maxDistance: ENEMY_PROJECTILE_MAX_DISTANCE,
+        radius: ENEMY_PROJECTILE_RADIUS,
+        sourceUnitId: this.id
+      });
+      return;
+    }
+
     if (target === 'knight') {
       knight.hp = Math.max(0, knight.hp - stats.attackDamage);
     } else if (villagerTarget) {
@@ -453,17 +470,25 @@ export class DarkUnit {
         break;
       }
       case 'priest': {
+        const direction = this.lastAttackTarget.clone().subtract(origin);
+        if (direction.lengthSq() === 0) {
+          direction.set(1, 0);
+        } else {
+          direction.normalize();
+        }
+        const flashLength = 6 + 4 * (1 - opacity);
+        const flashEnd = origin.clone().add(direction.clone().scale(flashLength));
         ctx.strokeStyle = `rgba(200, 170, 255, ${0.75 * opacity})`;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(origin.x, origin.y);
-        ctx.lineTo(this.lastAttackTarget.x, this.lastAttackTarget.y);
+        ctx.lineTo(flashEnd.x, flashEnd.y);
         ctx.stroke();
 
-        ctx.globalAlpha = 0.45 * opacity;
+        ctx.globalAlpha = 0.5 * opacity;
         ctx.fillStyle = '#E6D8FF';
         ctx.beginPath();
-        ctx.arc(this.lastAttackTarget.x, this.lastAttackTarget.y, 3.2, 0, Math.PI * 2);
+        ctx.arc(origin.x, origin.y, 2.6 + 1.2 * (1 - opacity), 0, Math.PI * 2);
         ctx.fill();
         break;
       }
