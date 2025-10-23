@@ -74,10 +74,12 @@ appRootElement.innerHTML = `
           <div class="stat-row">
             <span class="stat-label gold">Gold</span>
             <span class="stat-value" id="heroGoldText">0</span>
+            <span class="resource-gain" id="heroGoldGain" aria-live="polite"></span>
           </div>
           <div class="stat-row">
             <span class="stat-label shards">Relic Shards</span>
             <span class="stat-value" id="heroShardText">0</span>
+            <span class="resource-gain" id="heroShardGain" aria-live="polite"></span>
           </div>
           <div class="stat-row">
             <span class="stat-label health">Health</span>
@@ -271,7 +273,9 @@ focusCameraOnKnight({ zoom: INITIAL_CAMERA_ZOOM });
 const tooltipPanel = requireElement<HTMLDivElement>('#tooltipPanel');
 const inventoryPanel = requireElement<HTMLDivElement>('#inventoryPanel');
 const heroGoldText = requireElement<HTMLSpanElement>('#heroGoldText');
+const heroGoldGain = requireElement<HTMLSpanElement>('#heroGoldGain');
 const heroShardText = requireElement<HTMLSpanElement>('#heroShardText');
+const heroShardGain = requireElement<HTMLSpanElement>('#heroShardGain');
 const heroHealthBar = requireElement<HTMLDivElement>('#heroHealthBar');
 const heroHealthText = requireElement<HTMLSpanElement>('#heroHealthText');
 const buildPrompt = requireElement<HTMLButtonElement>('#buildPrompt');
@@ -301,6 +305,81 @@ const questDialogProgressFill = requireElement<HTMLDivElement>('#questDialogProg
 const questDialogPrimary = requireElement<HTMLButtonElement>('#questDialogPrimary');
 const questDialogSecondary = requireElement<HTMLButtonElement>('#questDialogSecondary');
 const questDialogCloseButton = requireElement<HTMLButtonElement>('#questDialogClose');
+
+type ResourceId = 'supplies' | 'relicShards';
+
+interface ResourceDisplay {
+  valueElement: HTMLSpanElement;
+  gainElement: HTMLSpanElement;
+  lastValue: number;
+  pendingGain: number;
+}
+
+const resourceDisplays: Record<ResourceId, ResourceDisplay> = {
+  supplies: {
+    valueElement: heroGoldText,
+    gainElement: heroGoldGain,
+    lastValue: game.getSupplies(),
+    pendingGain: 0
+  },
+  relicShards: {
+    valueElement: heroShardText,
+    gainElement: heroShardGain,
+    lastValue: game.getRelicShards(),
+    pendingGain: 0
+  }
+};
+
+resourceDisplays.supplies.valueElement.textContent = `${resourceDisplays.supplies.lastValue}`;
+resourceDisplays.relicShards.valueElement.textContent = `${resourceDisplays.relicShards.lastValue}`;
+
+function resetResourceGain(resource: ResourceId): void {
+  const display = resourceDisplays[resource];
+  display.pendingGain = 0;
+  display.gainElement.textContent = '';
+  display.gainElement.classList.remove('resource-gain--active');
+}
+
+function showResourceGain(resource: ResourceId, amount: number): void {
+  if (amount <= 0) {
+    return;
+  }
+  const display = resourceDisplays[resource];
+  display.pendingGain += amount;
+  display.gainElement.textContent = `+${display.pendingGain}`;
+  display.gainElement.classList.remove('resource-gain--active');
+  void display.gainElement.offsetWidth;
+  display.gainElement.classList.add('resource-gain--active');
+}
+
+function updateResourceValue(resource: ResourceId, newValue: number): void {
+  const display = resourceDisplays[resource];
+  if (newValue > display.lastValue) {
+    showResourceGain(resource, newValue - display.lastValue);
+  } else if (newValue < display.lastValue) {
+    resetResourceGain(resource);
+  }
+  display.lastValue = newValue;
+  display.valueElement.textContent = `${newValue}`;
+}
+
+function resetResourceDisplays(): void {
+  const supplies = game.getSupplies();
+  resourceDisplays.supplies.lastValue = supplies;
+  resourceDisplays.supplies.valueElement.textContent = `${supplies}`;
+  resetResourceGain('supplies');
+
+  const relicShards = game.getRelicShards();
+  resourceDisplays.relicShards.lastValue = relicShards;
+  resourceDisplays.relicShards.valueElement.textContent = `${relicShards}`;
+  resetResourceGain('relicShards');
+}
+
+for (const id of Object.keys(resourceDisplays) as ResourceId[]) {
+  resourceDisplays[id].gainElement.addEventListener('animationend', () => {
+    resetResourceGain(id);
+  });
+}
 
 const inventorySlots: HTMLDivElement[] = [];
 for (let i = 0; i < INVENTORY_SLOTS; i++) {
@@ -965,6 +1044,7 @@ window.addEventListener('keydown', (event) => {
     setItemShopOpen(false);
     tavernAutoOpen = false;
     updateItemShopButtons();
+    resetResourceDisplays();
   } else if (key === 'b') {
     event.preventDefault();
     setItemShopOpen(false);
@@ -1019,8 +1099,8 @@ window.addEventListener('keyup', (event) => {
 });
 
 function updateHud() {
-  heroGoldText.textContent = `${game.getSupplies()}`;
-  heroShardText.textContent = `${game.getRelicShards()}`;
+  updateResourceValue('supplies', game.getSupplies());
+  updateResourceValue('relicShards', game.getRelicShards());
   const hp = Math.max(0, game.knight.hp);
   const hpRatio = Math.max(0, Math.min(1, hp / KNIGHT_HP));
   heroHealthBar.style.width = `${hpRatio * 100}%`;
