@@ -317,7 +317,7 @@ body {
   background: rgba(82, 64, 48, 0.95);
 }
 
-.activities {
+.buffs-panel {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -327,7 +327,7 @@ body {
   overflow-y: auto;
 }
 
-.activities-title {
+.buffs-title {
   font-family: 'MedievalSharp', cursive;
   font-size: 16px;
   color: #fbbf24;
@@ -336,25 +336,7 @@ body {
   justify-content: space-between;
 }
 
-.activities.wave-active .activities-title {
-  color: #f87171;
-}
-
-.activities-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.activities-section h3 {
-  margin: 0;
-  font-size: 14px;
-  color: #f3f4f6;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.activities-list {
+.buffs-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -416,6 +398,47 @@ body {
 .activity-subtext {
   font-size: 12px;
   color: #d1d5db;
+}
+
+.camp-marker-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.camp-marker {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+  max-width: 260px;
+}
+
+.camp-marker .activity-item {
+  pointer-events: none;
+}
+
+.camp-marker.hidden {
+  display: none;
+}
+
+.camp-marker-empty {
+  position: absolute;
+  top: 12%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #5a3d2b;
+  background: rgba(17, 24, 39, 0.75);
+  color: #9ca3af;
+  font-size: 12px;
+  pointer-events: none;
+  text-align: center;
+}
+
+.camp-marker-empty.hidden {
+  display: none;
 }
 
 .activity-item.completed .activity-subtext {
