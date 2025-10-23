@@ -13,7 +13,7 @@ export const CASTLE_SIZE = 20;
 export const CASTLE_WIN_RADIUS = 25;
 export const CASTLE_STAY_TIME = 3.0;
 
-export const TAVERN_POS = new Vector2(WIDTH / 2, HEIGHT / 2);
+export const TAVERN_POS = new Vector2(WIDTH / 2 + 200, HEIGHT / 2);
 export const TAVERN_RADIUS = 34;
 export const TAVERN_INTERACT_RADIUS = 70;
 export const TAVERN_BASE_COLOR = '#78350f';
