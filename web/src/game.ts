@@ -174,6 +174,7 @@ type GamePhase = 'downtime' | 'wave';
 type QuestType = 'escort' | 'retrieve';
 
 const QUEST_INTERACTION_RADIUS = 96;
+const CREEP_APPROACH_BUFFER = 80;
 
 interface QuestReward {
   supplies: number;
@@ -352,6 +353,7 @@ export class Game {
   private rescueMasteryBonus = 0;
   private waveRallyPoint: Vector2 | null = null;
   private knightInTavern = false;
+  private nearbyCreepCampIds: Set<number> = new Set();
 
   constructor() {
     this.world = new World();
@@ -419,6 +421,7 @@ export class Game {
     this.rescueMasteryBonus = 0;
     this.waveRallyPoint = null;
     this.knightInTavern = false;
+    this.nearbyCreepCampIds.clear();
     this._enterDowntime();
   }
 
@@ -639,6 +642,10 @@ export class Game {
 
   getCreepCamps(): readonly CreepCamp[] {
     return this.creepCamps;
+  }
+
+  getNearbyCreepCampIds(): readonly number[] {
+    return Array.from(this.nearbyCreepCampIds);
   }
 
   getTemporaryBuffs(): readonly TemporaryBuff[] {
@@ -1112,6 +1119,7 @@ export class Game {
     this._drawCastle(ctx);
     this._drawBuildings(ctx);
     this._drawTavernInteraction(ctx);
+    this._drawCreepLairHighlights(ctx);
 
     for (const seal of this.seals) {
       seal.draw(ctx);
@@ -1158,6 +1166,7 @@ export class Game {
     this.weaponOrbitVisuals = [];
     this.smokeFields = [];
     this.waveRallyPoint = null;
+    this.nearbyCreepCampIds.clear();
     this._generateDowntimeActivities();
   }
 
@@ -1169,6 +1178,7 @@ export class Game {
     this.phaseTimer = WAVE_DURATION;
     this.waveIndex += 1;
     this.creepCamps = [];
+    this.nearbyCreepCampIds.clear();
     this.weaponOrbitVisuals = [];
     this.smokeFields = [];
     this._expireTemporaryBuffs();
@@ -1310,6 +1320,28 @@ export class Game {
       ctx.beginPath();
       ctx.arc(tavern.position.x, tavern.position.y, tavern.interactRadius, 0, Math.PI * 2);
       ctx.fill();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  private _drawCreepLairHighlights(ctx: CanvasRenderingContext2D): void {
+    if (!this.nearbyCreepCampIds.size) {
+      return;
+    }
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 8]);
+    ctx.strokeStyle = 'rgba(252, 211, 77, 0.85)';
+    ctx.fillStyle = 'rgba(252, 211, 77, 0.15)';
+    for (const camp of this.creepCamps) {
+      if (camp.cleared || !this.nearbyCreepCampIds.has(camp.id)) {
+        continue;
+      }
+      ctx.beginPath();
+      ctx.arc(camp.position.x, camp.position.y, camp.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
     ctx.setLineDash([]);
     ctx.restore();
@@ -1506,8 +1538,10 @@ export class Game {
 
   private _updateCreepCamps(_dt: number): void {
     if (!this.creepCamps.length) {
+      this.nearbyCreepCampIds.clear();
       return;
     }
+    this.nearbyCreepCampIds.clear();
     for (const camp of this.creepCamps) {
       if (camp.cleared) {
         continue;
@@ -1520,6 +1554,10 @@ export class Game {
         }
       }
       camp.unitIds = survivors;
+      const distanceToKnight = camp.position.distanceTo(this.knight.pos);
+      if (distanceToKnight <= camp.radius + CREEP_APPROACH_BUFFER) {
+        this.nearbyCreepCampIds.add(camp.id);
+      }
       if (!camp.unitIds.length) {
         this._completeCreepCamp(camp);
       }

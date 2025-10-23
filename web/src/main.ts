@@ -342,6 +342,8 @@ const campMarkerEmpty = document.createElement('div');
 campMarkerEmpty.className = 'camp-marker-empty hidden';
 campMarkerEmpty.textContent = 'Scouts report no roaming packs.';
 campMarkerLayer.appendChild(campMarkerEmpty);
+const defeatedCampIds = new Set<number>();
+const campRemovalTimers = new Map<number, number>();
 
 function showTooltip(title: string, body: string) {
   tooltipPanel.innerHTML = `<div class="title">${title}</div><div>${body}</div>`;
@@ -605,7 +607,14 @@ function renderActivities(): void {
 
 function renderCamps(): void {
   const camps = game.getCreepCamps();
-  campMarkerEmpty.classList.toggle('hidden', camps.length > 0);
+  const highlightedCampIds = new Set(game.getNearbyCreepCampIds());
+  let activeCampCount = 0;
+  for (const camp of camps) {
+    if (!defeatedCampIds.has(camp.id)) {
+      activeCampCount += 1;
+    }
+  }
+  campMarkerEmpty.classList.toggle('hidden', activeCampCount > 0);
 
   const seen = new Set<number>();
   let scaleX = 1;
@@ -613,7 +622,7 @@ function renderCamps(): void {
   let offsetX = 0;
   let offsetY = 0;
 
-  if (camps.length > 0) {
+  if (activeCampCount > 0) {
     const canvasRect = canvas.getBoundingClientRect();
     const containerRect = gameContainerElement.getBoundingClientRect();
     scaleX = canvasRect.width / canvas.width;
@@ -623,6 +632,9 @@ function renderCamps(): void {
   }
 
   for (const camp of camps) {
+    if (defeatedCampIds.has(camp.id)) {
+      continue;
+    }
     seen.add(camp.id);
     let marker = campMarkers.get(camp.id);
     if (!marker) {
@@ -642,14 +654,15 @@ function renderCamps(): void {
     }
 
     const card = marker.querySelector<HTMLDivElement>('.activity-item');
-    card?.classList.toggle('completed', camp.cleared);
-
     const title = marker.querySelector<HTMLDivElement>('.activity-title');
+    const statusElement = marker.querySelector<HTMLDivElement>('.activity-subtext');
+
+    if (card) {
+      card.classList.toggle('completed', camp.cleared);
+    }
     if (title) {
       title.textContent = camp.name;
     }
-
-    const statusElement = marker.querySelector<HTMLDivElement>('.activity-subtext');
     if (statusElement) {
       const remaining = camp.unitIds.length;
       const shardLabel = camp.rewardRelicShards === 1 ? 'shard' : 'shards';
@@ -666,14 +679,50 @@ function renderCamps(): void {
     marker.style.left = `${cssX}px`;
     marker.style.top = `${cssY}px`;
 
+    const highlighted = highlightedCampIds.has(camp.id) && !camp.cleared;
+    if (highlighted) {
+      marker.classList.add('highlighted');
+      const radiusOffset = camp.radius * camera.zoom * scaleY + 12;
+      marker.style.transform = `translate(-50%, -100%) translateY(-${radiusOffset}px)`;
+    } else {
+      marker.classList.remove('highlighted');
+      marker.style.transform = 'translate(-50%, -100%)';
+    }
+
+    if (camp.cleared) {
+      if (card && !campRemovalTimers.has(camp.id)) {
+        card.classList.add('defeated');
+        marker.classList.add('defeated');
+        const removalDelay = 2100;
+        const timerId = window.setTimeout(() => {
+          const pendingCard = marker?.querySelector<HTMLDivElement>('.activity-item');
+          pendingCard?.classList.remove('defeated');
+          marker?.remove();
+          campMarkers.delete(camp.id);
+          campRemovalTimers.delete(camp.id);
+          defeatedCampIds.add(camp.id);
+        }, removalDelay);
+        campRemovalTimers.set(camp.id, timerId);
+      }
+    } else if (card) {
+      card.classList.remove('defeated');
+      marker.classList.remove('defeated');
+    }
+
     const visible = screenX >= 0 && screenX <= canvas.width && screenY >= 0 && screenY <= canvas.height;
     marker.classList.toggle('hidden', !visible);
   }
 
   for (const [campId, marker] of campMarkers.entries()) {
     if (!seen.has(campId)) {
+      const timerId = campRemovalTimers.get(campId);
+      if (timerId != null) {
+        window.clearTimeout(timerId);
+        campRemovalTimers.delete(campId);
+      }
       marker.remove();
       campMarkers.delete(campId);
+      defeatedCampIds.delete(campId);
     }
   }
 }
