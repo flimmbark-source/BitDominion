@@ -2207,7 +2207,7 @@ export class Game {
     ctx.font = '14px Consolas, monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
-    ctx.fillText(helperText, WIDTH / 2, HEIGHT - 12);
+    ctx.fillText(helperText, ctx.canvas.width / 2, ctx.canvas.height - 12);
 
     ctx.restore();
   }
@@ -2972,18 +2972,19 @@ export class Game {
   }
 
   private _drawOverlay(ctx: CanvasRenderingContext2D, text: string, color: string, subtitle: string): void {
+    const { width, height } = ctx.canvas;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
-    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.fillRect(0, 0, width, height);
 
     ctx.fillStyle = color;
     ctx.font = '48px Consolas, monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, WIDTH / 2, HEIGHT / 2 - 30);
+    ctx.fillText(text, width / 2, height / 2 - 30);
 
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '20px Consolas, monospace';
-    ctx.fillText(subtitle, WIDTH / 2, HEIGHT / 2 + 20);
+    ctx.fillText(subtitle, width / 2, height / 2 + 20);
 
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
