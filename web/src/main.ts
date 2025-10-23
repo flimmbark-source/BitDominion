@@ -80,6 +80,7 @@ appRootElement.innerHTML = `
           <div class="stat-row">
             <span class="stat-label shards">Relic Shards</span>
             <span class="stat-value" id="heroShardText">0</span>
+            <span class="resource-gain" id="heroShardGain" aria-live="polite"></span>
           </div>
           <div class="stat-row">
             <span class="stat-label health">Health</span>
@@ -275,6 +276,7 @@ const inventoryPanel = requireElement<HTMLDivElement>('#inventoryPanel');
 const heroGoldText = requireElement<HTMLSpanElement>('#heroGoldText');
 const heroGoldGain = requireElement<HTMLSpanElement>('#heroGoldGain');
 const heroShardText = requireElement<HTMLSpanElement>('#heroShardText');
+const heroShardGain = requireElement<HTMLSpanElement>('#heroShardGain');
 const heroHealthBar = requireElement<HTMLDivElement>('#heroHealthBar');
 const heroHealthText = requireElement<HTMLSpanElement>('#heroHealthText');
 const buildPrompt = requireElement<HTMLButtonElement>('#buildPrompt');
