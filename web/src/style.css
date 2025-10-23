@@ -412,10 +412,48 @@ body {
   transform: translate(-50%, -100%);
   pointer-events: none;
   max-width: 260px;
+  transition: transform 0.25s ease-out;
 }
 
 .camp-marker .activity-item {
   pointer-events: none;
+}
+
+.camp-marker.highlighted .activity-item {
+  box-shadow: 0 12px 26px rgba(252, 211, 77, 0.35);
+  transform: translateY(-6px);
+  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+
+.camp-marker.defeated .activity-item {
+  pointer-events: none;
+}
+
+@keyframes camp-card-flash {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 rgba(252, 211, 77, 0));
+  }
+  50% {
+    filter: drop-shadow(0 0 12px rgba(252, 211, 77, 0.85));
+  }
+}
+
+@keyframes camp-card-explode {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+    filter: drop-shadow(0 0 12px rgba(252, 211, 77, 0.75));
+  }
+  100% {
+    transform: scale(1.65);
+    opacity: 0;
+    filter: blur(6px);
+  }
+}
+
+.camp-marker .activity-item.defeated {
+  animation: camp-card-flash 0.45s ease-in-out 3, camp-card-explode 0.45s ease-out 1 1.35s forwards;
 }
 
 .camp-marker.hidden {
