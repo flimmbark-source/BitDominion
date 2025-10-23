@@ -439,9 +439,8 @@ function populateBuildingShop() {
       if (index >= 0) {
         game.selectBlueprint(index);
         game.setBuildMode(true);
+        hideBuildLedger();
         updateInventory();
-        updateBuildingShopButtons();
-        updateBuildPrompt();
       }
     });
     button.addEventListener('mouseenter', () =>
@@ -454,6 +453,10 @@ function populateBuildingShop() {
 }
 
 function updateBuildingShopButtons() {
+  if (!game.isBuildModeActive() && isBuildLedgerOpen) {
+    isBuildLedgerOpen = false;
+    hideTooltip();
+  }
   const supplies = game.getSupplies();
   const selected = game.getSelectedBlueprint();
   for (const [type, button] of buildingShopButtons.entries()) {
@@ -462,7 +465,8 @@ function updateBuildingShopButtons() {
     button.classList.toggle('disabled', !affordable);
     button.classList.toggle('selected', type === selected);
   }
-  buildingShopPanel.classList.toggle('hidden', !game.isBuildModeActive());
+  const shouldHide = !game.isBuildModeActive() || !isBuildLedgerOpen;
+  buildingShopPanel.classList.toggle('hidden', shouldHide);
   updateBuildPrompt();
 }
 
@@ -496,6 +500,36 @@ let isQuestLogOpen = false;
 let activeQuestDialog: NearbyQuestInteraction | null = null;
 const dismissedQuestInteractions = new Set<number>();
 let lastQuestInteractionGiverId: number | null = null;
+let isBuildLedgerOpen = false;
+
+function openBuildLedger(): void {
+  if (!game.isBuildModeActive()) {
+    game.setBuildMode(true);
+  }
+  if (!isBuildLedgerOpen) {
+    isBuildLedgerOpen = true;
+  }
+  updateBuildingShopButtons();
+}
+
+function hideBuildLedger(): void {
+  if (isBuildLedgerOpen) {
+    isBuildLedgerOpen = false;
+    hideTooltip();
+  }
+  updateBuildingShopButtons();
+}
+
+function disableBuildMode(): void {
+  if (game.isBuildModeActive()) {
+    game.setBuildMode(false);
+  }
+  if (isBuildLedgerOpen) {
+    isBuildLedgerOpen = false;
+    hideTooltip();
+  }
+  updateBuildingShopButtons();
+}
 
 function setItemShopOpen(open: boolean): void {
   const nextState = open && game.isDowntime();
@@ -508,8 +542,7 @@ function setItemShopOpen(open: boolean): void {
   }
   isItemShopOpen = nextState;
   if (isItemShopOpen && game.isBuildModeActive()) {
-    game.setBuildMode(false);
-    updateBuildingShopButtons();
+    disableBuildMode();
   }
   if (!isItemShopOpen) {
     hideTooltip();
@@ -930,9 +963,15 @@ canvas.addEventListener('contextmenu', (event) => {
 
 buildPrompt.addEventListener('click', () => {
   setItemShopOpen(false);
-  game.toggleBuildMode();
-  updateBuildingShopButtons();
-  updateBuildPrompt();
+  if (game.isBuildModeActive()) {
+    if (isBuildLedgerOpen) {
+      disableBuildMode();
+    } else {
+      openBuildLedger();
+    }
+  } else {
+    openBuildLedger();
+  }
 });
 
 buildPrompt.addEventListener('mouseenter', () => {
@@ -977,6 +1016,11 @@ window.addEventListener('keydown', (event) => {
       event.preventDefault();
       return;
     }
+    if (game.isBuildModeActive()) {
+      disableBuildMode();
+      event.preventDefault();
+      return;
+    }
   }
 
   if (key === 'r') {
@@ -994,9 +1038,15 @@ window.addEventListener('keydown', (event) => {
   } else if (key === 'b') {
     event.preventDefault();
     setItemShopOpen(false);
-    game.toggleBuildMode();
-    updateBuildingShopButtons();
-    updateBuildPrompt();
+    if (game.isBuildModeActive()) {
+      if (isBuildLedgerOpen) {
+        disableBuildMode();
+      } else {
+        openBuildLedger();
+      }
+    } else {
+      openBuildLedger();
+    }
   } else if (key === 'i') {
     event.preventDefault();
     setItemShopOpen(!isItemShopOpen);
