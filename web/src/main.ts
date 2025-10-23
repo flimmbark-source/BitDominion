@@ -63,6 +63,7 @@ appRootElement.innerHTML = `
   <div class="game-shell">
     <div class="game-container" id="gameContainer">
       <canvas id="gameCanvas" class="game-canvas"></canvas>
+      <div class="camp-marker-layer" id="campMarkerLayer"></div>
       <div class="dark-energy ui-panel" id="darkEnergyClock">
         <h2>Dark Energy</h2>
         <div class="bar"><div class="bar-fill" id="darkEnergyFill"></div></div>
@@ -91,16 +92,9 @@ appRootElement.innerHTML = `
           <span class="build-toggle-text">(B)uild</span>
         </button>
         <div class="ui-panel inventory" id="inventoryPanel"></div>
-        <div class="ui-panel activities" id="activitiesPanel">
-          <div class="activities-title">Downtime Briefing</div>
-          <div class="activities-section">
-            <h3>Creep Camps</h3>
-            <ul class="activities-list" id="campList"></ul>
-          </div>
-          <div class="activities-section">
-            <h3>Temporary Blessings</h3>
-            <ul class="activities-list" id="buffList"></ul>
-          </div>
+        <div class="ui-panel buffs-panel" id="buffsPanel">
+          <div class="buffs-title">Temporary Blessings</div>
+          <ul class="buffs-list" id="buffList"></ul>
         </div>
       </div>
       <div class="shop-panel ui-panel hidden" id="buildingShopPanel">
@@ -283,9 +277,8 @@ const heroHealthText = requireElement<HTMLSpanElement>('#heroHealthText');
 const buildPrompt = requireElement<HTMLButtonElement>('#buildPrompt');
 const darkEnergyFill = requireElement<HTMLDivElement>('#darkEnergyFill');
 const darkEnergyText = requireElement<HTMLParagraphElement>('#darkEnergyText');
-const campList = requireElement<HTMLUListElement>('#campList');
 const buffList = requireElement<HTMLUListElement>('#buffList');
-const activitiesPanel = requireElement<HTMLDivElement>('#activitiesPanel');
+const campMarkerLayer = requireElement<HTMLDivElement>('#campMarkerLayer');
 const buildingShopPanel = requireElement<HTMLDivElement>('#buildingShopPanel');
 const buildingShopItemsContainer = requireElement<HTMLDivElement>('#shopItemsContainer');
 const itemShopPanel = requireElement<HTMLDivElement>('#itemShopPanel');
@@ -319,6 +312,11 @@ for (let i = 0; i < INVENTORY_SLOTS; i++) {
 
 const buildingShopButtons = new Map<BuildingType, HTMLButtonElement>();
 const itemButtons = new Map<ItemId, HTMLButtonElement>();
+const campMarkers = new Map<number, HTMLDivElement>();
+const campMarkerEmpty = document.createElement('div');
+campMarkerEmpty.className = 'camp-marker-empty hidden';
+campMarkerEmpty.textContent = 'Scouts report no roaming packs.';
+campMarkerLayer.appendChild(campMarkerEmpty);
 
 function showTooltip(title: string, body: string) {
   tooltipPanel.innerHTML = `<div class="title">${title}</div><div>${body}</div>`;
@@ -547,122 +545,78 @@ function renderActivities(): void {
   renderBuffs();
 }
 
-function renderQuests(): void {
-  const givers = game.getQuestGivers();
-  questList.innerHTML = '';
-  if (!givers.length) {
-    const empty = document.createElement('li');
-    empty.className = 'activity-empty';
-    empty.textContent = 'No villages require aid.';
-    questList.appendChild(empty);
-    return;
-  }
-  const isDowntime = game.isDowntime();
-  for (const giver of givers) {
-    const li = document.createElement('li');
-    li.className = `activity-item quest-giver ${giver.state}`;
-    const icon = document.createElement('span');
-    icon.className = 'activity-icon';
-    icon.textContent = '📜';
-    li.appendChild(icon);
-
-    const body = document.createElement('div');
-    body.className = 'activity-body';
-    const title = document.createElement('div');
-    title.className = 'activity-title';
-    title.textContent = `${giver.name} — ${giver.villageName}`;
-    body.appendChild(title);
-    const dialog = document.createElement('div');
-    dialog.className = 'activity-subtext';
-    dialog.textContent = giver.dialog;
-    body.appendChild(dialog);
-
-    if (giver.offer) {
-      const offer = document.createElement('div');
-      offer.className = 'activity-subtext';
-      offer.textContent = giver.offer.rewardText;
-      body.appendChild(offer);
-    }
-
-    if (giver.activeQuest) {
-      const questInfo = document.createElement('div');
-      questInfo.className = 'activity-subtext';
-      questInfo.textContent = giver.activeQuest.rewardText;
-      body.appendChild(questInfo);
-      const ratio = giver.activeQuest.requiredTime > 0
-        ? Math.min(1, giver.activeQuest.progress / giver.activeQuest.requiredTime)
-        : 0;
-      const progress = document.createElement('div');
-      progress.className = 'activity-progress';
-      const bar = document.createElement('span');
-      bar.style.width = `${ratio * 100}%`;
-      progress.appendChild(bar);
-      body.appendChild(progress);
-    }
-
-    const actions = document.createElement('div');
-    actions.className = 'quest-actions';
-    let actionButton: HTMLButtonElement | null = null;
-    if (giver.state === 'offering') {
-      actionButton = document.createElement('button');
-      actionButton.className = 'quest-action-button';
-      actionButton.textContent = isDowntime ? 'Accept Quest' : 'Return in downtime';
-      actionButton.disabled = !isDowntime;
-      actionButton.addEventListener('click', () => {
-        if (game.acceptQuestFromGiver(giver.id)) {
-          updateInventory();
-          renderActivities();
-        }
-      });
-    } else if (giver.state === 'turnIn') {
-      actionButton = document.createElement('button');
-      actionButton.className = 'quest-action-button';
-      actionButton.textContent = 'Turn In';
-      actionButton.addEventListener('click', () => {
-        if (game.turnInQuestFromGiver(giver.id)) {
-          renderActivities();
-        }
-      });
-    }
-
-    if (actionButton) {
-      actions.appendChild(actionButton);
-    }
-    if (actions.childElementCount > 0) {
-      body.appendChild(actions);
-    }
-
-    li.appendChild(body);
-    questList.appendChild(li);
-  }
-}
-
 function renderCamps(): void {
   const camps = game.getCreepCamps();
-  campList.innerHTML = '';
-  if (!camps.length) {
-    const empty = document.createElement('li');
-    empty.className = 'activity-empty';
-    empty.textContent = 'Scouts report no roaming packs.';
-    campList.appendChild(empty);
-    return;
+  campMarkerEmpty.classList.toggle('hidden', camps.length > 0);
+
+  const seen = new Set<number>();
+  let scaleX = 1;
+  let scaleY = 1;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  if (camps.length > 0) {
+    const canvasRect = canvas.getBoundingClientRect();
+    const containerRect = gameContainerElement.getBoundingClientRect();
+    scaleX = canvasRect.width / canvas.width;
+    scaleY = canvasRect.height / canvas.height;
+    offsetX = canvasRect.left - containerRect.left;
+    offsetY = canvasRect.top - containerRect.top;
   }
+
   for (const camp of camps) {
-    const li = document.createElement('li');
-    li.className = `activity-item ${camp.cleared ? 'completed' : ''}`;
-    const remaining = camp.unitIds.length;
-    const shardLabel = camp.rewardRelicShards === 1 ? 'shard' : 'shards';
-    const status = camp.cleared
-      ? 'Cleared'
-      : `${remaining} foes remain • ${camp.rewardSupplies} gold & ${camp.rewardRelicShards} ${shardLabel}`;
-    li.innerHTML = `
-      <span class="activity-icon">🐾</span>
-      <div class="activity-body">
-        <div class="activity-title">${camp.name}</div>
-        <div class="activity-subtext">${status}</div>
-      </div>
-    `;
-    campList.appendChild(li);
+    seen.add(camp.id);
+    let marker = campMarkers.get(camp.id);
+    if (!marker) {
+      marker = document.createElement('div');
+      marker.className = 'camp-marker';
+      marker.innerHTML = `
+        <div class="activity-item">
+          <span class="activity-icon">🐾</span>
+          <div class="activity-body">
+            <div class="activity-title"></div>
+            <div class="activity-subtext"></div>
+          </div>
+        </div>
+      `;
+      campMarkerLayer.appendChild(marker);
+      campMarkers.set(camp.id, marker);
+    }
+
+    const card = marker.querySelector<HTMLDivElement>('.activity-item');
+    card?.classList.toggle('completed', camp.cleared);
+
+    const title = marker.querySelector<HTMLDivElement>('.activity-title');
+    if (title) {
+      title.textContent = camp.name;
+    }
+
+    const statusElement = marker.querySelector<HTMLDivElement>('.activity-subtext');
+    if (statusElement) {
+      const remaining = camp.unitIds.length;
+      const shardLabel = camp.rewardRelicShards === 1 ? 'shard' : 'shards';
+      statusElement.textContent = camp.cleared
+        ? 'Cleared'
+        : `${remaining} foes remain • ${camp.rewardSupplies} gold & ${camp.rewardRelicShards} ${shardLabel}`;
+    }
+
+    const screenX = (camp.position.x - camera.center.x) * camera.zoom + canvas.width / 2;
+    const screenY = (camp.position.y - camera.center.y) * camera.zoom + canvas.height / 2;
+
+    const cssX = offsetX + screenX * scaleX;
+    const cssY = offsetY + screenY * scaleY;
+    marker.style.left = `${cssX}px`;
+    marker.style.top = `${cssY}px`;
+
+    const visible = screenX >= 0 && screenX <= canvas.width && screenY >= 0 && screenY <= canvas.height;
+    marker.classList.toggle('hidden', !visible);
+  }
+
+  for (const [campId, marker] of campMarkers.entries()) {
+    if (!seen.has(campId)) {
+      marker.remove();
+      campMarkers.delete(campId);
+    }
   }
 }
 
@@ -856,7 +810,6 @@ function handleQuestDialogPrimary(): void {
     handled = game.turnInQuestFromGiver(giverId);
     if (handled) {
       updateInventory();
-      updateHeroItems(true);
       renderActivities();
       if (isQuestLogOpen) {
         renderQuestLog();
@@ -1088,8 +1041,6 @@ function updateHud() {
     }
   }
   darkEnergyText.textContent = phaseText;
-  activitiesPanel.classList.toggle('wave-active', phase === 'wave');
-
   const atTavern = game.isKnightAtTavern() && game.isDowntime();
   if (atTavern) {
     tavernAutoOpen = true;
