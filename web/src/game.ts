@@ -173,6 +173,8 @@ interface KnightProjectile {
 type GamePhase = 'downtime' | 'wave';
 type QuestType = 'escort' | 'retrieve';
 
+const QUEST_INTERACTION_RADIUS = 96;
+
 interface QuestReward {
   supplies: number;
   buff: TemporaryBuff | null;
@@ -238,6 +240,30 @@ export interface QuestGiverStatus {
     requiredTime: number;
     rewardText: string;
   } | null;
+}
+
+export interface QuestLogEntry {
+  id: number;
+  giverId: number;
+  giverName: string;
+  villageName: string;
+  description: string;
+  icon: string;
+  progress: number;
+  requiredTime: number;
+  state: 'active' | 'completed';
+  rewardText: string;
+}
+
+export interface NearbyQuestInteraction {
+  giverId: number;
+  giverName: string;
+  villageName: string;
+  greeting: string;
+  state: QuestGiverStatus['state'];
+  offer: QuestGiverStatus['offer'];
+  activeQuest: QuestGiverStatus['activeQuest'];
+  distance: number;
 }
 
 interface WeaponRuntimeState {
@@ -452,6 +478,25 @@ export class Game {
     return this.quests;
   }
 
+  getQuestLogEntries(): QuestLogEntry[] {
+    const rewardText = (quest: Quest) => `${quest.reward.supplies} gold • ${quest.reward.description}`;
+    return this.quests.map((quest) => {
+      const giver = this.questGivers.find((candidate) => candidate.id === quest.giverId) ?? null;
+      return {
+        id: quest.id,
+        giverId: quest.giverId,
+        giverName: giver?.name ?? 'Unknown Patron',
+        villageName: giver?.villageName ?? 'Unknown Village',
+        description: quest.description,
+        icon: quest.icon,
+        progress: quest.progress,
+        requiredTime: quest.requiredTime,
+        state: quest.state === 'completed' ? 'completed' : 'active',
+        rewardText: rewardText(quest)
+      };
+    });
+  }
+
   getQuestGivers(): QuestGiverStatus[] {
     return this.questGivers.map((giver) => {
       const { state, activeQuest } = this._resolveQuestGiverState(giver);
@@ -483,10 +528,76 @@ export class Game {
     });
   }
 
-  acceptQuestFromGiver(giverId: number): boolean {
-    if (!this.isDowntime()) {
-      return false;
+  getNearbyQuestInteraction(): NearbyQuestInteraction | null {
+    if (!this.questGivers.length) {
+      return null;
     }
+    const rewardText = (quest: Quest) => `${quest.reward.supplies} gold • ${quest.reward.description}`;
+    const candidates: {
+      giver: QuestGiver;
+      state: QuestGiverStatus['state'];
+      activeQuest: Quest | null;
+      distance: number;
+    }[] = [];
+    for (const giver of this.questGivers) {
+      const distance = giver.position.distanceTo(this.knight.pos);
+      if (distance > QUEST_INTERACTION_RADIUS) {
+        continue;
+      }
+      const { state, activeQuest } = this._resolveQuestGiverState(giver);
+      candidates.push({ giver, state, activeQuest, distance });
+    }
+    if (!candidates.length) {
+      return null;
+    }
+    const priority = (candidate: (typeof candidates)[number]) => {
+      if (candidate.state === 'turnIn') {
+        return 0;
+      }
+      if (candidate.state === 'offering') {
+        return 1;
+      }
+      if (candidate.state === 'active') {
+        return 2;
+      }
+      return 3;
+    };
+    candidates.sort((a, b) => {
+      const diff = priority(a) - priority(b);
+      if (diff !== 0) {
+        return diff;
+      }
+      return a.distance - b.distance;
+    });
+    const { giver, state, activeQuest, distance } = candidates[0];
+    return {
+      giverId: giver.id,
+      giverName: giver.name,
+      villageName: giver.villageName,
+      greeting: giver.greeting,
+      state,
+      offer: giver.questOffer
+        ? {
+            description: giver.questOffer.description,
+            icon: giver.questOffer.icon,
+            rewardText: rewardText(giver.questOffer)
+          }
+        : null,
+      activeQuest: activeQuest
+        ? {
+            id: activeQuest.id,
+            description: activeQuest.description,
+            icon: activeQuest.icon,
+            progress: activeQuest.progress,
+            requiredTime: activeQuest.requiredTime,
+            rewardText: rewardText(activeQuest)
+          }
+        : null,
+      distance
+    };
+  }
+
+  acceptQuestFromGiver(giverId: number): boolean {
     const giver = this.questGivers.find((candidate) => candidate.id === giverId);
     if (!giver || giver.activeQuestId != null || !giver.questOffer) {
       return false;

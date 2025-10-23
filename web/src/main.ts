@@ -1,5 +1,5 @@
 import './style.css';
-import { Game, CameraState } from './game';
+import { Game, CameraState, NearbyQuestInteraction, QuestLogEntry } from './game';
 import {
   HEIGHT,
   WIDTH,
@@ -91,16 +91,8 @@ appRootElement.innerHTML = `
           <span class="build-toggle-text">(B)uild</span>
         </button>
         <div class="ui-panel inventory" id="inventoryPanel"></div>
-        <div class="ui-panel hero-items" id="heroItemsPanel">
-          <div class="hero-items-title">Hero Gear</div>
-          <div class="hero-items-grid" id="heroItemsContainer"></div>
-        </div>
         <div class="ui-panel activities" id="activitiesPanel">
           <div class="activities-title">Downtime Briefing</div>
-          <div class="activities-section">
-            <h3>Quests</h3>
-            <ul class="activities-list" id="questList"></ul>
-          </div>
           <div class="activities-section">
             <h3>Creep Camps</h3>
             <ul class="activities-list" id="campList"></ul>
@@ -123,6 +115,40 @@ appRootElement.innerHTML = `
       <div class="game-over hidden" id="gameOverScreen">
         <h2 id="gameOverTitle">You Have Perished</h2>
         <p id="gameOverSubtext">Press R to try again.</p>
+      </div>
+      <div class="quest-dialog hidden" id="questDialog" aria-hidden="true">
+        <div class="quest-dialog-panel">
+          <div class="quest-dialog-header">
+            <div class="quest-dialog-icon" id="questDialogIcon" aria-hidden="true">📜</div>
+            <div class="quest-dialog-titles">
+              <div class="quest-dialog-title" id="questDialogTitle">Quest Offer</div>
+              <div class="quest-dialog-subtitle" id="questDialogSubtitle"></div>
+            </div>
+            <button class="quest-dialog-close" id="questDialogClose" type="button" aria-label="Dismiss quest prompt">×</button>
+          </div>
+          <div class="quest-dialog-body">
+            <p class="quest-dialog-greeting" id="questDialogGreeting"></p>
+            <p class="quest-dialog-description" id="questDialogDescription"></p>
+            <p class="quest-dialog-reward" id="questDialogReward"></p>
+            <div class="quest-dialog-progress hidden" id="questDialogProgress">
+              <div class="quest-dialog-progress-bar" id="questDialogProgressFill"></div>
+            </div>
+          </div>
+          <div class="quest-dialog-actions" id="questDialogActions">
+            <button class="quest-action-button" id="questDialogPrimary" type="button">Accept Quest</button>
+            <button class="quest-action-button secondary" id="questDialogSecondary" type="button">Not now</button>
+          </div>
+        </div>
+      </div>
+      <div class="quest-log-overlay hidden" id="questLogOverlay" aria-hidden="true">
+        <div class="quest-log-panel">
+          <div class="quest-log-header">
+            <h2>Quest Log</h2>
+            <button class="quest-log-close" id="questLogClose" type="button" aria-label="Close quest log">×</button>
+          </div>
+          <p class="quest-log-subtitle">Active contracts from allied villages.</p>
+          <ul class="quest-log-list" id="questLogList"></ul>
+        </div>
       </div>
     </div>
   </div>
@@ -269,6 +295,21 @@ const itemShopItemsContainer = requireElement<HTMLDivElement>('#itemShopItemsCon
 const gameOverScreen = requireElement<HTMLDivElement>('#gameOverScreen');
 const gameOverTitle = requireElement<HTMLHeadingElement>('#gameOverTitle');
 const gameOverSubtext = requireElement<HTMLParagraphElement>('#gameOverSubtext');
+const questLogOverlay = requireElement<HTMLDivElement>('#questLogOverlay');
+const questLogList = requireElement<HTMLUListElement>('#questLogList');
+const questLogCloseButton = requireElement<HTMLButtonElement>('#questLogClose');
+const questDialogElement = requireElement<HTMLDivElement>('#questDialog');
+const questDialogIcon = requireElement<HTMLDivElement>('#questDialogIcon');
+const questDialogTitle = requireElement<HTMLDivElement>('#questDialogTitle');
+const questDialogSubtitle = requireElement<HTMLDivElement>('#questDialogSubtitle');
+const questDialogGreeting = requireElement<HTMLParagraphElement>('#questDialogGreeting');
+const questDialogDescription = requireElement<HTMLParagraphElement>('#questDialogDescription');
+const questDialogReward = requireElement<HTMLParagraphElement>('#questDialogReward');
+const questDialogProgress = requireElement<HTMLDivElement>('#questDialogProgress');
+const questDialogProgressFill = requireElement<HTMLDivElement>('#questDialogProgressFill');
+const questDialogPrimary = requireElement<HTMLButtonElement>('#questDialogPrimary');
+const questDialogSecondary = requireElement<HTMLButtonElement>('#questDialogSecondary');
+const questDialogCloseButton = requireElement<HTMLButtonElement>('#questDialogClose');
 
 const inventorySlots: HTMLDivElement[] = [];
 for (let i = 0; i < INVENTORY_SLOTS; i++) {
@@ -307,8 +348,32 @@ document.addEventListener('pointermove', (event) => {
   if (tooltipPanel.style.display === 'none') {
     return;
   }
-  tooltipPanel.style.left = `${event.clientX + 16}px`;
-  tooltipPanel.style.top = `${event.clientY + 18}px`;
+
+  const baseLeft = event.clientX + 16;
+  const baseTop = event.clientY + 18;
+  tooltipPanel.style.left = `${baseLeft}px`;
+  tooltipPanel.style.top = `${baseTop}px`;
+
+  const rect = tooltipPanel.getBoundingClientRect();
+  const margin = 8;
+  let left = baseLeft;
+  let top = baseTop;
+
+  if (left + rect.width > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - rect.width - margin);
+  } else if (left < margin) {
+    left = margin;
+  }
+
+  if (top + rect.height > window.innerHeight - margin) {
+    top = event.clientY - rect.height - 12;
+  }
+  if (top < margin) {
+    top = margin;
+  }
+
+  tooltipPanel.style.left = `${left}px`;
+  tooltipPanel.style.top = `${top}px`;
 });
 
 function updateInventory() {
@@ -405,9 +470,12 @@ function updateBuildPrompt(): void {
 }
 
 let isItemShopOpen = false;
-let lastHeroItemsKey = '';
 let lastPhase: 'downtime' | 'wave' | null = null;
 let tavernAutoOpen = false;
+let isQuestLogOpen = false;
+let activeQuestDialog: NearbyQuestInteraction | null = null;
+const dismissedQuestInteractions = new Set<number>();
+let lastQuestInteractionGiverId: number | null = null;
 
 function setItemShopOpen(open: boolean): void {
   const nextState = open && game.isDowntime();
@@ -440,7 +508,6 @@ function populateItemShop(): void {
     button.addEventListener('click', () => {
       if (game.purchaseItem(itemId)) {
         updateItemShopButtons();
-        updateHeroItems(true);
       }
     });
     button.addEventListener('mouseenter', () => showTooltip(definition.name, definition.description));
@@ -477,33 +544,7 @@ function updateItemShopButtons(): void {
   itemShopPanel.classList.toggle('hidden', !shopVisible);
 }
 
-function updateHeroItems(force = false): void {
-  const loadout = game.getHeroLoadout();
-  const key = loadout.map((entry) => `${entry.id}:${entry.status}:${entry.evolved}`).join('|');
-  if (!force && key === lastHeroItemsKey) {
-    return;
-  }
-  lastHeroItemsKey = key;
-  heroItemsContainer.innerHTML = '';
-  if (!loadout.length) {
-    const empty = document.createElement('div');
-    empty.className = 'hero-item hero-item-empty';
-    empty.textContent = 'None';
-    heroItemsContainer.appendChild(empty);
-    return;
-  }
-  for (const entry of loadout) {
-    const itemElement = document.createElement('div');
-    itemElement.className = `hero-item${entry.evolved ? ' hero-item-evolved' : ''}`;
-    itemElement.innerHTML = `<span class="item-icon">${entry.icon}</span><div class="hero-item-status">${entry.status}</div>`;
-    itemElement.addEventListener('mouseenter', () => showTooltip(entry.name, entry.description));
-    itemElement.addEventListener('mouseleave', hideTooltip);
-    heroItemsContainer.appendChild(itemElement);
-  }
-}
-
 function renderActivities(): void {
-  renderQuests();
   renderCamps();
   renderBuffs();
 }
@@ -581,7 +622,6 @@ function renderQuests(): void {
       actionButton.textContent = 'Turn In';
       actionButton.addEventListener('click', () => {
         if (game.turnInQuestFromGiver(giver.id)) {
-          updateHeroItems(true);
           renderActivities();
         }
       });
@@ -652,12 +692,199 @@ function renderBuffs(): void {
   }
 }
 
+function renderQuestLog(): void {
+  const entries: QuestLogEntry[] = game.getQuestLogEntries();
+  questLogList.innerHTML = '';
+  if (!entries.length) {
+    const empty = document.createElement('li');
+    empty.className = 'quest-log-empty';
+    empty.textContent = 'No active quests. Visit a village to discover new contracts.';
+    questLogList.appendChild(empty);
+    return;
+  }
+  for (const entry of entries) {
+    const li = document.createElement('li');
+    li.className = `quest-log-entry ${entry.state}`;
+
+    const header = document.createElement('div');
+    header.className = 'quest-log-entry-header';
+    const icon = document.createElement('span');
+    icon.className = 'quest-log-entry-icon';
+    icon.textContent = entry.icon;
+    header.appendChild(icon);
+
+    const text = document.createElement('div');
+    text.className = 'quest-log-entry-text';
+    const title = document.createElement('div');
+    title.className = 'quest-log-entry-title';
+    title.textContent = `${entry.giverName} — ${entry.villageName}`;
+    const description = document.createElement('div');
+    description.className = 'quest-log-entry-description';
+    description.textContent = entry.description;
+    text.appendChild(title);
+    text.appendChild(description);
+    header.appendChild(text);
+    li.appendChild(header);
+
+    const reward = document.createElement('div');
+    reward.className = 'quest-log-entry-reward';
+    reward.textContent = entry.rewardText;
+    li.appendChild(reward);
+
+    const status = document.createElement('div');
+    status.className = 'quest-log-entry-status';
+    status.textContent = entry.state === 'completed' ? 'Ready to turn in' : 'In progress';
+    li.appendChild(status);
+
+    const progress = document.createElement('div');
+    progress.className = 'quest-log-entry-progress';
+    const bar = document.createElement('span');
+    const ratio = entry.requiredTime > 0 ? Math.min(1, entry.progress / entry.requiredTime) : entry.state === 'completed' ? 1 : 0;
+    bar.style.width = `${ratio * 100}%`;
+    progress.appendChild(bar);
+    li.appendChild(progress);
+
+    questLogList.appendChild(li);
+  }
+}
+
+function setQuestLogOpen(open: boolean): void {
+  const nextState = Boolean(open);
+  if (isQuestLogOpen === nextState) {
+    if (nextState) {
+      renderQuestLog();
+    }
+    return;
+  }
+  isQuestLogOpen = nextState;
+  questLogOverlay.classList.toggle('hidden', !nextState);
+  questLogOverlay.setAttribute('aria-hidden', nextState ? 'false' : 'true');
+  if (nextState) {
+    renderQuestLog();
+  }
+}
+
+function showQuestDialog(interaction: NearbyQuestInteraction): void {
+  activeQuestDialog = interaction;
+  questDialogElement.classList.remove('hidden');
+  questDialogElement.setAttribute('aria-hidden', 'false');
+  questDialogIcon.textContent = interaction.offer?.icon ?? interaction.activeQuest?.icon ?? '📜';
+  questDialogTitle.textContent = interaction.giverName;
+  questDialogSubtitle.textContent = interaction.villageName;
+  questDialogGreeting.textContent = interaction.greeting;
+
+  if (interaction.state === 'offering' && interaction.offer) {
+    questDialogDescription.textContent = interaction.offer.description;
+    questDialogReward.textContent = interaction.offer.rewardText;
+    questDialogPrimary.textContent = 'Accept Quest';
+    questDialogSecondary.textContent = 'Not now';
+  } else if (interaction.state === 'turnIn' && interaction.activeQuest) {
+    questDialogDescription.textContent = interaction.activeQuest.description;
+    questDialogReward.textContent = interaction.activeQuest.rewardText;
+    questDialogPrimary.textContent = 'Turn In Quest';
+    questDialogSecondary.textContent = 'Later';
+  } else {
+    questDialogDescription.textContent = '';
+    questDialogReward.textContent = '';
+    questDialogPrimary.textContent = 'Close';
+    questDialogSecondary.textContent = 'Later';
+  }
+
+  const activeQuest = interaction.activeQuest;
+  if (activeQuest) {
+    const ratio = interaction.state === 'turnIn'
+      ? 1
+      : activeQuest.requiredTime > 0
+        ? Math.min(1, activeQuest.progress / activeQuest.requiredTime)
+        : 0;
+    questDialogProgress.classList.remove('hidden');
+    questDialogProgressFill.style.width = `${ratio * 100}%`;
+  } else {
+    questDialogProgress.classList.add('hidden');
+    questDialogProgressFill.style.width = '0%';
+  }
+}
+
+function hideQuestDialog(): void {
+  if (questDialogElement.classList.contains('hidden')) {
+    activeQuestDialog = null;
+    return;
+  }
+  questDialogElement.classList.add('hidden');
+  questDialogElement.setAttribute('aria-hidden', 'true');
+  activeQuestDialog = null;
+}
+
+function updateQuestDialog(): void {
+  const interaction = game.getNearbyQuestInteraction();
+  const relevant = interaction && (interaction.state === 'offering' || interaction.state === 'turnIn');
+  if (!relevant) {
+    if (lastQuestInteractionGiverId != null && (!interaction || interaction.giverId !== lastQuestInteractionGiverId)) {
+      dismissedQuestInteractions.delete(lastQuestInteractionGiverId);
+      lastQuestInteractionGiverId = null;
+    }
+    hideQuestDialog();
+    return;
+  }
+  if (interaction.giverId !== lastQuestInteractionGiverId) {
+    if (lastQuestInteractionGiverId != null) {
+      dismissedQuestInteractions.delete(lastQuestInteractionGiverId);
+    }
+    lastQuestInteractionGiverId = interaction.giverId;
+  }
+  if (dismissedQuestInteractions.has(interaction.giverId)) {
+    hideQuestDialog();
+    return;
+  }
+  showQuestDialog(interaction);
+}
+
+function handleQuestDialogPrimary(): void {
+  if (!activeQuestDialog) {
+    return;
+  }
+  const giverId = activeQuestDialog.giverId;
+  let handled = false;
+  if (activeQuestDialog.state === 'offering') {
+    handled = game.acceptQuestFromGiver(giverId);
+    if (handled) {
+      updateInventory();
+      renderActivities();
+      if (isQuestLogOpen) {
+        renderQuestLog();
+      }
+    }
+  } else if (activeQuestDialog.state === 'turnIn') {
+    handled = game.turnInQuestFromGiver(giverId);
+    if (handled) {
+      updateInventory();
+      updateHeroItems(true);
+      renderActivities();
+      if (isQuestLogOpen) {
+        renderQuestLog();
+      }
+    }
+  }
+  if (handled) {
+    dismissedQuestInteractions.delete(giverId);
+    lastQuestInteractionGiverId = null;
+    hideQuestDialog();
+    activeQuestDialog = null;
+  }
+}
+
+function handleQuestDialogSecondary(): void {
+  if (activeQuestDialog) {
+    dismissedQuestInteractions.add(activeQuestDialog.giverId);
+  }
+  hideQuestDialog();
+}
+
 populateBuildingShop();
 populateItemShop();
 updateInventory();
 updateBuildingShopButtons();
 updateItemShopButtons();
-updateHeroItems(true);
 
 type CanvasInteractionEvent = PointerEvent | WheelEvent;
 
@@ -745,6 +972,16 @@ buildPrompt.addEventListener('mouseenter', () => {
 
 buildPrompt.addEventListener('mouseleave', hideTooltip);
 
+questLogCloseButton.addEventListener('click', () => setQuestLogOpen(false));
+questLogOverlay.addEventListener('click', (event) => {
+  if (event.target === questLogOverlay) {
+    setQuestLogOpen(false);
+  }
+});
+questDialogPrimary.addEventListener('click', handleQuestDialogPrimary);
+questDialogSecondary.addEventListener('click', handleQuestDialogSecondary);
+questDialogCloseButton.addEventListener('click', handleQuestDialogSecondary);
+
 window.addEventListener('keydown', (event) => {
   if (event.key === 'F1') {
     event.preventDefault();
@@ -754,6 +991,19 @@ window.addEventListener('keydown', (event) => {
 
   const key = event.key.toLowerCase();
   const code = event.code;
+  if (key === 'escape') {
+    if (isQuestLogOpen) {
+      setQuestLogOpen(false);
+      event.preventDefault();
+      return;
+    }
+    if (!questDialogElement.classList.contains('hidden')) {
+      handleQuestDialogSecondary();
+      event.preventDefault();
+      return;
+    }
+  }
+
   if (key === 'r') {
     game.reset();
     game.setCanvasHudEnabled(false);
@@ -764,7 +1014,6 @@ window.addEventListener('keydown', (event) => {
     setItemShopOpen(false);
     tavernAutoOpen = false;
     updateItemShopButtons();
-    updateHeroItems(true);
   } else if (key === 'b') {
     event.preventDefault();
     setItemShopOpen(false);
@@ -774,6 +1023,9 @@ window.addEventListener('keydown', (event) => {
   } else if (key === 'i') {
     event.preventDefault();
     setItemShopOpen(!isItemShopOpen);
+  } else if (key === 'q') {
+    event.preventDefault();
+    setQuestLogOpen(!isQuestLogOpen);
   } else if (key === 'c') {
     game.toggleCanopy();
   } else if (code === 'Space') {
@@ -873,8 +1125,11 @@ function updateHud() {
   updateInventory();
   updateBuildingShopButtons();
   updateItemShopButtons();
-  updateHeroItems();
   renderActivities();
+  if (isQuestLogOpen) {
+    renderQuestLog();
+  }
+  updateQuestDialog();
 }
 
 const ctx = context;
