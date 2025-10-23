@@ -1,6 +1,6 @@
 import {
   ARC_WIDTH_DEG,
-  CASTLE_POS,
+  KNIGHT_SPAWN_POS,
   FPS,
   KNIGHT_ACCEL,
   KNIGHT_BOW_COOLDOWN,
@@ -22,7 +22,7 @@ import type { World } from '../world';
 import type { DarkUnit } from './darkUnit';
 
 export class Knight {
-  public pos = CASTLE_POS.clone().add(new Vector2(0, 120));
+  public pos = KNIGHT_SPAWN_POS.clone();
   public velocity = new Vector2();
   public target = this.pos.clone();
   public hp = KNIGHT_HP;
