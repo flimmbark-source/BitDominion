@@ -91,10 +91,6 @@ appRootElement.innerHTML = `
           <span class="build-toggle-text">(B)uild</span>
         </button>
         <div class="ui-panel inventory" id="inventoryPanel"></div>
-        <div class="ui-panel hero-items" id="heroItemsPanel">
-          <div class="hero-items-title">Hero Gear</div>
-          <div class="hero-items-grid" id="heroItemsContainer"></div>
-        </div>
         <div class="ui-panel activities" id="activitiesPanel">
           <div class="activities-title">Downtime Briefing</div>
           <div class="activities-section">
@@ -288,6 +284,7 @@ const buildPrompt = requireElement<HTMLButtonElement>('#buildPrompt');
 const darkEnergyFill = requireElement<HTMLDivElement>('#darkEnergyFill');
 const darkEnergyText = requireElement<HTMLParagraphElement>('#darkEnergyText');
 const heroItemsContainer = requireElement<HTMLDivElement>('#heroItemsContainer');
+const questList = requireElement<HTMLUListElement>('#questList');
 const campList = requireElement<HTMLUListElement>('#campList');
 const buffList = requireElement<HTMLUListElement>('#buffList');
 const activitiesPanel = requireElement<HTMLDivElement>('#activitiesPanel');
@@ -351,8 +348,32 @@ document.addEventListener('pointermove', (event) => {
   if (tooltipPanel.style.display === 'none') {
     return;
   }
-  tooltipPanel.style.left = `${event.clientX + 16}px`;
-  tooltipPanel.style.top = `${event.clientY + 18}px`;
+
+  const baseLeft = event.clientX + 16;
+  const baseTop = event.clientY + 18;
+  tooltipPanel.style.left = `${baseLeft}px`;
+  tooltipPanel.style.top = `${baseTop}px`;
+
+  const rect = tooltipPanel.getBoundingClientRect();
+  const margin = 8;
+  let left = baseLeft;
+  let top = baseTop;
+
+  if (left + rect.width > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - rect.width - margin);
+  } else if (left < margin) {
+    left = margin;
+  }
+
+  if (top + rect.height > window.innerHeight - margin) {
+    top = event.clientY - rect.height - 12;
+  }
+  if (top < margin) {
+    top = margin;
+  }
+
+  tooltipPanel.style.left = `${left}px`;
+  tooltipPanel.style.top = `${top}px`;
 });
 
 function updateInventory() {
@@ -449,7 +470,6 @@ function updateBuildPrompt(): void {
 }
 
 let isItemShopOpen = false;
-let lastHeroItemsKey = '';
 let lastPhase: 'downtime' | 'wave' | null = null;
 let isQuestLogOpen = false;
 let activeQuestDialog: NearbyQuestInteraction | null = null;
@@ -487,7 +507,6 @@ function populateItemShop(): void {
     button.addEventListener('click', () => {
       if (game.purchaseItem(itemId)) {
         updateItemShopButtons();
-        updateHeroItems(true);
       }
     });
     button.addEventListener('mouseenter', () => showTooltip(definition.name, definition.description));
@@ -524,34 +543,99 @@ function updateItemShopButtons(): void {
   itemShopPanel.classList.toggle('hidden', !shopVisible);
 }
 
-function updateHeroItems(force = false): void {
-  const loadout = game.getHeroLoadout();
-  const key = loadout.map((entry) => `${entry.id}:${entry.status}:${entry.evolved}`).join('|');
-  if (!force && key === lastHeroItemsKey) {
-    return;
-  }
-  lastHeroItemsKey = key;
-  heroItemsContainer.innerHTML = '';
-  if (!loadout.length) {
-    const empty = document.createElement('div');
-    empty.className = 'hero-item hero-item-empty';
-    empty.textContent = 'None';
-    heroItemsContainer.appendChild(empty);
-    return;
-  }
-  for (const entry of loadout) {
-    const itemElement = document.createElement('div');
-    itemElement.className = `hero-item${entry.evolved ? ' hero-item-evolved' : ''}`;
-    itemElement.innerHTML = `<span class="item-icon">${entry.icon}</span><div class="hero-item-status">${entry.status}</div>`;
-    itemElement.addEventListener('mouseenter', () => showTooltip(entry.name, entry.description));
-    itemElement.addEventListener('mouseleave', hideTooltip);
-    heroItemsContainer.appendChild(itemElement);
-  }
-}
-
 function renderActivities(): void {
   renderCamps();
   renderBuffs();
+}
+
+function renderQuests(): void {
+  const givers = game.getQuestGivers();
+  questList.innerHTML = '';
+  if (!givers.length) {
+    const empty = document.createElement('li');
+    empty.className = 'activity-empty';
+    empty.textContent = 'No villages require aid.';
+    questList.appendChild(empty);
+    return;
+  }
+  const isDowntime = game.isDowntime();
+  for (const giver of givers) {
+    const li = document.createElement('li');
+    li.className = `activity-item quest-giver ${giver.state}`;
+    const icon = document.createElement('span');
+    icon.className = 'activity-icon';
+    icon.textContent = '📜';
+    li.appendChild(icon);
+
+    const body = document.createElement('div');
+    body.className = 'activity-body';
+    const title = document.createElement('div');
+    title.className = 'activity-title';
+    title.textContent = `${giver.name} — ${giver.villageName}`;
+    body.appendChild(title);
+    const dialog = document.createElement('div');
+    dialog.className = 'activity-subtext';
+    dialog.textContent = giver.dialog;
+    body.appendChild(dialog);
+
+    if (giver.offer) {
+      const offer = document.createElement('div');
+      offer.className = 'activity-subtext';
+      offer.textContent = giver.offer.rewardText;
+      body.appendChild(offer);
+    }
+
+    if (giver.activeQuest) {
+      const questInfo = document.createElement('div');
+      questInfo.className = 'activity-subtext';
+      questInfo.textContent = giver.activeQuest.rewardText;
+      body.appendChild(questInfo);
+      const ratio = giver.activeQuest.requiredTime > 0
+        ? Math.min(1, giver.activeQuest.progress / giver.activeQuest.requiredTime)
+        : 0;
+      const progress = document.createElement('div');
+      progress.className = 'activity-progress';
+      const bar = document.createElement('span');
+      bar.style.width = `${ratio * 100}%`;
+      progress.appendChild(bar);
+      body.appendChild(progress);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'quest-actions';
+    let actionButton: HTMLButtonElement | null = null;
+    if (giver.state === 'offering') {
+      actionButton = document.createElement('button');
+      actionButton.className = 'quest-action-button';
+      actionButton.textContent = isDowntime ? 'Accept Quest' : 'Return in downtime';
+      actionButton.disabled = !isDowntime;
+      actionButton.addEventListener('click', () => {
+        if (game.acceptQuestFromGiver(giver.id)) {
+          updateInventory();
+          renderActivities();
+        }
+      });
+    } else if (giver.state === 'turnIn') {
+      actionButton = document.createElement('button');
+      actionButton.className = 'quest-action-button';
+      actionButton.textContent = 'Turn In';
+      actionButton.addEventListener('click', () => {
+        if (game.turnInQuestFromGiver(giver.id)) {
+          renderActivities();
+        }
+      });
+    }
+
+    if (actionButton) {
+      actions.appendChild(actionButton);
+    }
+    if (actions.childElementCount > 0) {
+      body.appendChild(actions);
+    }
+
+    li.appendChild(body);
+    questList.appendChild(li);
+  }
 }
 
 function renderCamps(): void {
@@ -800,7 +884,6 @@ populateItemShop();
 updateInventory();
 updateBuildingShopButtons();
 updateItemShopButtons();
-updateHeroItems(true);
 
 type CanvasInteractionEvent = PointerEvent | WheelEvent;
 
@@ -929,7 +1012,6 @@ window.addEventListener('keydown', (event) => {
     updateBuildingShopButtons();
     setItemShopOpen(false);
     updateItemShopButtons();
-    updateHeroItems(true);
   } else if (key === 'b') {
     event.preventDefault();
     setItemShopOpen(false);
@@ -1032,7 +1114,6 @@ function updateHud() {
   updateInventory();
   updateBuildingShopButtons();
   updateItemShopButtons();
-  updateHeroItems();
   renderActivities();
   if (isQuestLogOpen) {
     renderQuestLog();
