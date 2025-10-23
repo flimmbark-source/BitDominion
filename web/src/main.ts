@@ -307,8 +307,32 @@ document.addEventListener('pointermove', (event) => {
   if (tooltipPanel.style.display === 'none') {
     return;
   }
-  tooltipPanel.style.left = `${event.clientX + 16}px`;
-  tooltipPanel.style.top = `${event.clientY + 18}px`;
+
+  const baseLeft = event.clientX + 16;
+  const baseTop = event.clientY + 18;
+  tooltipPanel.style.left = `${baseLeft}px`;
+  tooltipPanel.style.top = `${baseTop}px`;
+
+  const rect = tooltipPanel.getBoundingClientRect();
+  const margin = 8;
+  let left = baseLeft;
+  let top = baseTop;
+
+  if (left + rect.width > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - rect.width - margin);
+  } else if (left < margin) {
+    left = margin;
+  }
+
+  if (top + rect.height > window.innerHeight - margin) {
+    top = event.clientY - rect.height - 12;
+  }
+  if (top < margin) {
+    top = margin;
+  }
+
+  tooltipPanel.style.left = `${left}px`;
+  tooltipPanel.style.top = `${top}px`;
 });
 
 function updateInventory() {
