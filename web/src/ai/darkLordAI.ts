@@ -9,6 +9,8 @@ import {
 import { Vector2 } from '../math/vector2';
 import type { Game } from '../game';
 
+type UnitDeployment = { type: UnitType; position: Vector2 };
+
 export class DarkLordAI {
   public evilEnergy = 0;
   private energyAccumulator = 0;
@@ -34,11 +36,12 @@ export class DarkLordAI {
     }
 
     const rally = game.getWaveRallyPoint() ?? CASTLE_POS.clone();
-    for (const type of composition) {
+    const deployments = this.planWaveFormation(composition, rally);
+    for (const { type, position } of deployments) {
       if (!game.canSpawnMoreUnits()) {
         break;
       }
-      if (!this.spawnUnit(game, type, this.jitter(rally, 18))) {
+      if (!this.spawnUnit(game, type, position)) {
         break;
       }
     }
@@ -88,6 +91,102 @@ export class DarkLordAI {
     }
 
     return lineup;
+  }
+
+  private planWaveFormation(lineup: UnitType[], rally: Vector2): UnitDeployment[] {
+    if (!lineup.length) {
+      return [];
+    }
+
+    const forward = rally.clone().subtract(CASTLE_POS);
+    if (forward.lengthSq() < 1e-4) {
+      forward.set(0, 1);
+    }
+    forward.normalize();
+    const right = new Vector2(-forward.y, forward.x).normalize();
+
+    const counts: Record<UnitType, number> = { scout: 0, tank: 0, priest: 0 };
+    for (const type of lineup) {
+      counts[type] += 1;
+    }
+
+    const slotsByType: Record<UnitType, Vector2[]> = {
+      tank: this.buildTankFormation(counts.tank, rally, forward, right),
+      priest: this.buildPriestFormation(counts.priest, rally, forward, right),
+      scout: this.buildScoutFormation(counts.scout, rally, forward, right)
+    };
+
+    return lineup.map((type) => {
+      const slots = slotsByType[type];
+      const position = slots.length ? slots.shift()! : this.jitter(rally, 14);
+      return { type, position };
+    });
+  }
+
+  private buildTankFormation(count: number, rally: Vector2, forward: Vector2, right: Vector2): Vector2[] {
+    const slots: Vector2[] = [];
+    const rowSize = 2;
+    const forwardStart = 34;
+    const forwardStep = 20;
+    const lateralSpacing = 18;
+    for (let i = 0; i < count; i++) {
+      const row = Math.floor(i / rowSize);
+      const column = i % rowSize;
+      const lateralIndex = column - (rowSize - 1) / 2;
+      const forwardOffset = forwardStart + row * forwardStep;
+      const lateralOffset = lateralIndex * lateralSpacing;
+      const base = this.offsetFromRally(rally, forward, right, forwardOffset, lateralOffset);
+      slots.push(this.jitter(base, 8));
+    }
+    return slots;
+  }
+
+  private buildPriestFormation(count: number, rally: Vector2, forward: Vector2, right: Vector2): Vector2[] {
+    const slots: Vector2[] = [];
+    const rowSize = 3;
+    const forwardStart = -26;
+    const forwardStep = -18;
+    const lateralSpacing = 16;
+    for (let i = 0; i < count; i++) {
+      const row = Math.floor(i / rowSize);
+      const column = i % rowSize;
+      const lateralIndex = column - (rowSize - 1) / 2;
+      const forwardOffset = forwardStart + row * forwardStep;
+      const lateralOffset = lateralIndex * lateralSpacing;
+      const base = this.offsetFromRally(rally, forward, right, forwardOffset, lateralOffset);
+      slots.push(this.jitter(base, 6));
+    }
+    return slots;
+  }
+
+  private buildScoutFormation(count: number, rally: Vector2, forward: Vector2, right: Vector2): Vector2[] {
+    const slots: Vector2[] = [];
+    const lateralBase = 32;
+    const lateralStep = 12;
+    const forwardBase = 18;
+    const forwardVariance = 10;
+    for (let i = 0; i < count; i++) {
+      const side = i % 2 === 0 ? 1 : -1;
+      const lane = Math.floor(i / 2);
+      const lateralOffset = side * (lateralBase + lane * lateralStep);
+      const forwardOffset = forwardBase + (lane % 3) * forwardVariance;
+      const base = this.offsetFromRally(rally, forward, right, forwardOffset, lateralOffset);
+      slots.push(this.jitter(base, 12));
+    }
+    return slots;
+  }
+
+  private offsetFromRally(
+    rally: Vector2,
+    forward: Vector2,
+    right: Vector2,
+    forwardDistance: number,
+    lateralDistance: number
+  ): Vector2 {
+    return rally
+      .clone()
+      .add(forward.clone().scale(forwardDistance))
+      .add(right.clone().scale(lateralDistance));
   }
 
   private accumulateEnergy(dt: number): void {
