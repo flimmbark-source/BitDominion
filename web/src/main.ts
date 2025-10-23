@@ -407,6 +407,7 @@ function updateBuildPrompt(): void {
 let isItemShopOpen = false;
 let lastHeroItemsKey = '';
 let lastPhase: 'downtime' | 'wave' | null = null;
+let tavernAutoOpen = false;
 
 function setItemShopOpen(open: boolean): void {
   const nextState = open && game.isDowntime();
@@ -761,6 +762,7 @@ window.addEventListener('keydown', (event) => {
     updateInventory();
     updateBuildingShopButtons();
     setItemShopOpen(false);
+    tavernAutoOpen = false;
     updateItemShopButtons();
     updateHeroItems(true);
   } else if (key === 'b') {
@@ -837,6 +839,15 @@ function updateHud() {
   }
   darkEnergyText.textContent = phaseText;
   activitiesPanel.classList.toggle('wave-active', phase === 'wave');
+
+  const atTavern = game.isKnightAtTavern() && game.isDowntime();
+  if (atTavern) {
+    tavernAutoOpen = true;
+    setItemShopOpen(true);
+  } else if (tavernAutoOpen) {
+    setItemShopOpen(false);
+    tavernAutoOpen = false;
+  }
 
   if (lastPhase !== phase) {
     if (phase === 'wave') {
