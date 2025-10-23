@@ -145,12 +145,29 @@ function updateGameViewportSize(): void {
   const paddingY = parseFloat(appStyles.paddingTop) + parseFloat(appStyles.paddingBottom);
   const availableWidth = Math.max(0, window.innerWidth - paddingX);
   const availableHeight = Math.max(0, window.innerHeight - paddingY - GAME_SHELL_GAP);
-  const size = Math.min(availableWidth, availableHeight);
-  if (!Number.isFinite(size) || size <= 0) {
-    gameContainerElement.style.removeProperty('--game-size');
+  const aspectRatio = WIDTH / HEIGHT;
+
+  let targetWidth = availableWidth;
+  let targetHeight = targetWidth / aspectRatio;
+
+  if (targetHeight > availableHeight) {
+    targetHeight = availableHeight;
+    targetWidth = targetHeight * aspectRatio;
+  }
+
+  if (
+    !Number.isFinite(targetWidth) ||
+    !Number.isFinite(targetHeight) ||
+    targetWidth <= 0 ||
+    targetHeight <= 0
+  ) {
+    gameContainerElement.style.removeProperty('--game-width');
+    gameContainerElement.style.removeProperty('--game-height');
     return;
   }
-  gameContainerElement.style.setProperty('--game-size', `${size}px`);
+
+  gameContainerElement.style.setProperty('--game-width', `${targetWidth}px`);
+  gameContainerElement.style.setProperty('--game-height', `${targetHeight}px`);
 }
 
 window.addEventListener('resize', updateGameViewportSize);

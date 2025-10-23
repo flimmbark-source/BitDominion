@@ -1,7 +1,7 @@
 import { Vector2 } from '../math/vector2';
 import { hexToRgb } from '../utils/color';
 
-export const WIDTH = 800;
+export const WIDTH = 1200;
 export const HEIGHT = 800;
 export const FPS = 60;
 

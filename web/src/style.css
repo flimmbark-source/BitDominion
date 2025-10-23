@@ -43,11 +43,14 @@ body {
   box-shadow: 0 0 20px rgba(0, 0, 0, 0.55);
   width: clamp(
     var(--game-min-size),
-    var(--game-size, min(100vw, calc(100vh - var(--game-vertical-padding)))),
+    var(--game-width, min(100vw, calc(100vh - var(--game-vertical-padding)))),
     var(--game-max-size)
   );
-  aspect-ratio: 1 / 1;
-  height: auto;
+  height: clamp(
+    var(--game-min-size),
+    var(--game-height, calc(100vh - var(--game-vertical-padding))),
+    var(--game-max-size)
+  );
   margin: 0 auto;
   align-self: center;
   justify-self: center;
