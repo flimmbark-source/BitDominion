@@ -471,6 +471,7 @@ function updateBuildPrompt(): void {
 
 let isItemShopOpen = false;
 let lastPhase: 'downtime' | 'wave' | null = null;
+let tavernAutoOpen = false;
 let isQuestLogOpen = false;
 let activeQuestDialog: NearbyQuestInteraction | null = null;
 const dismissedQuestInteractions = new Set<number>();
@@ -1011,6 +1012,7 @@ window.addEventListener('keydown', (event) => {
     updateInventory();
     updateBuildingShopButtons();
     setItemShopOpen(false);
+    tavernAutoOpen = false;
     updateItemShopButtons();
   } else if (key === 'b') {
     event.preventDefault();
@@ -1089,6 +1091,15 @@ function updateHud() {
   }
   darkEnergyText.textContent = phaseText;
   activitiesPanel.classList.toggle('wave-active', phase === 'wave');
+
+  const atTavern = game.isKnightAtTavern() && game.isDowntime();
+  if (atTavern) {
+    tavernAutoOpen = true;
+    setItemShopOpen(true);
+  } else if (tavernAutoOpen) {
+    setItemShopOpen(false);
+    tavernAutoOpen = false;
+  }
 
   if (lastPhase !== phase) {
     if (phase === 'wave') {

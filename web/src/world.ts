@@ -5,6 +5,13 @@ import {
   CHEST_OPEN_RADIUS,
   CASTLE_POS,
   CASTLE_WIN_RADIUS,
+  TAVERN_BASE_COLOR,
+  TAVERN_DOOR_COLOR,
+  TAVERN_INTERACT_RADIUS,
+  TAVERN_OUTLINE_COLOR,
+  TAVERN_POS,
+  TAVERN_RADIUS,
+  TAVERN_ROOF_COLOR,
   HEIGHT,
   HUT_FILL_COLOR,
   HUT_OUTLINE_COLOR,
@@ -36,6 +43,8 @@ export interface Tree {
   position: Vector2;
   radius: number;
 }
+
+export type Tavern = Tree & { interactRadius: number };
 
 export interface Hut {
   center: Vector2;
@@ -123,6 +132,12 @@ export class World {
   public readonly trees: Tree[] = [];
   public readonly villages: Village[] = [];
 
+  private readonly tavern: Tavern = {
+    position: TAVERN_POS.clone(),
+    radius: TAVERN_RADIUS,
+    interactRadius: TAVERN_INTERACT_RADIUS
+  };
+
   private readonly huts: Hut[] = [];
   private readonly losSegments: LosSegment[] = [];
   private canopyEnabled = true;
@@ -179,6 +194,10 @@ export class World {
     return this.trees;
   }
 
+  getTavern(): Tavern {
+    return this.tavern;
+  }
+
   getVillages(): readonly Village[] {
     return this.villages;
   }
@@ -200,6 +219,10 @@ export class World {
       if (push) {
         steer.add(push);
       }
+    }
+    const tavernPush = this.computeTreePush(entity.pos, this.tavern, radius);
+    if (tavernPush) {
+      steer.add(tavernPush);
     }
     for (const hut of this.huts) {
       const push = this.computeHutPush(entity.pos, hut, radius);
@@ -253,6 +276,19 @@ export class World {
         const correction = minDistance - distance;
         position.add(toEntity.scale(correction + 0.1));
       }
+    }
+
+    const tavernMinDistance = this.tavern.radius + radius;
+    const tavernOffset = position.clone().subtract(this.tavern.position);
+    const tavernDistanceSq = tavernOffset.lengthSq();
+    if (tavernDistanceSq === 0) {
+      const randomAngle = Math.random() * Math.PI * 2;
+      position.add(new Vector2(Math.cos(randomAngle), Math.sin(randomAngle)).scale(tavernMinDistance * 0.2));
+    } else if (tavernDistanceSq < tavernMinDistance * tavernMinDistance) {
+      const distance = Math.sqrt(tavernDistanceSq);
+      tavernOffset.scale(1 / distance);
+      const correction = tavernMinDistance - distance;
+      position.add(tavernOffset.scale(correction + 0.1));
     }
 
     for (const hut of this.huts) {
@@ -435,6 +471,7 @@ export class World {
   }
 
   drawTerrain(ctx: CanvasRenderingContext2D): void {
+    this.drawTavern(ctx);
     this.drawHuts(ctx);
     this.drawChests(ctx);
     this.drawTrees(ctx);
@@ -688,6 +725,49 @@ export class World {
       };
       this.villages.push(village);
     }
+  }
+
+  private drawTavern(ctx: CanvasRenderingContext2D): void {
+    const { position, radius } = this.tavern;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+    ctx.beginPath();
+    ctx.arc(position.x, position.y + 6, radius + 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = TAVERN_BASE_COLOR;
+    ctx.strokeStyle = TAVERN_OUTLINE_COLOR;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = TAVERN_ROOF_COLOR;
+    ctx.beginPath();
+    ctx.moveTo(position.x - radius * 0.9, position.y - radius * 0.4);
+    ctx.lineTo(position.x, position.y - radius * 1.1);
+    ctx.lineTo(position.x + radius * 0.9, position.y - radius * 0.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = TAVERN_DOOR_COLOR;
+    const doorWidth = radius * 0.45;
+    const doorHeight = radius * 0.8;
+    ctx.fillRect(position.x - doorWidth / 2, position.y + radius * 0.1, doorWidth, doorHeight);
+
+    ctx.fillStyle = '#fef3c7';
+    const signWidth = radius * 0.7;
+    const signHeight = radius * 0.28;
+    ctx.fillRect(position.x - signWidth / 2, position.y - radius * 0.05, signWidth, signHeight);
+    ctx.fillStyle = '#92400e';
+    ctx.font = 'bold 12px Inter';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🍻', position.x, position.y + signHeight * 0.3);
+
+    ctx.restore();
   }
 
   private updateVillages(dt: number, context: WorldUpdateContext): void {

@@ -351,6 +351,7 @@ export class Game {
   private killMasteryBonus = 0;
   private rescueMasteryBonus = 0;
   private waveRallyPoint: Vector2 | null = null;
+  private knightInTavern = false;
 
   constructor() {
     this.world = new World();
@@ -417,6 +418,7 @@ export class Game {
     this.killMasteryBonus = 0;
     this.rescueMasteryBonus = 0;
     this.waveRallyPoint = null;
+    this.knightInTavern = false;
     this._enterDowntime();
   }
 
@@ -719,6 +721,10 @@ export class Game {
     return this.phase === 'downtime';
   }
 
+  isKnightAtTavern(): boolean {
+    return this.knightInTavern;
+  }
+
   isWaveActive(): boolean {
     return this.phase === 'wave';
   }
@@ -1018,12 +1024,14 @@ export class Game {
         emitNoise: (position, strength) => this.emitNoise(position, strength),
         onChestOpened: (position) => this._onChestOpened(position)
       });
+      this.knightInTavern = false;
       return;
     }
 
     this._updatePhase(dt);
     this._updateSupplies(dt);
     this.knight.update(dt, this.world);
+    this._updateTavernState();
     this._applyBarricadeSlowdown();
     this._updateSeals(dt);
     this._updateShield(dt);
@@ -1103,6 +1111,7 @@ export class Game {
     this._drawShield(ctx);
     this._drawCastle(ctx);
     this._drawBuildings(ctx);
+    this._drawTavernInteraction(ctx);
 
     for (const seal of this.seals) {
       seal.draw(ctx);
@@ -1182,6 +1191,11 @@ export class Game {
         this._enterDowntime();
       }
     }
+  }
+
+  private _updateTavernState(): void {
+    const tavern = this.world.getTavern();
+    this.knightInTavern = this.knight.pos.distanceTo(tavern.position) <= tavern.interactRadius;
   }
 
   private _generateDowntimeActivities(): void {
@@ -1276,6 +1290,28 @@ export class Game {
       ctx.fillStyle = '#ffffff';
       ctx.fillText('📜', giver.position.x, giver.position.y - 18);
     }
+    ctx.restore();
+  }
+
+  private _drawTavernInteraction(ctx: CanvasRenderingContext2D): void {
+    if (!this.isDowntime()) {
+      return;
+    }
+    const tavern = this.world.getTavern();
+    ctx.save();
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.65)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.arc(tavern.position.x, tavern.position.y, tavern.interactRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    if (this.knightInTavern) {
+      ctx.fillStyle = 'rgba(253, 230, 138, 0.25)';
+      ctx.beginPath();
+      ctx.arc(tavern.position.x, tavern.position.y, tavern.interactRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.setLineDash([]);
     ctx.restore();
   }
 
