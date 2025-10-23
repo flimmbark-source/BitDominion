@@ -74,6 +74,7 @@ appRootElement.innerHTML = `
           <div class="stat-row">
             <span class="stat-label gold">Gold</span>
             <span class="stat-value" id="heroGoldText">0</span>
+            <span class="resource-gain" id="heroGoldGain" aria-live="polite"></span>
           </div>
           <div class="stat-row">
             <span class="stat-label shards">Relic Shards</span>
@@ -271,6 +272,7 @@ focusCameraOnKnight({ zoom: INITIAL_CAMERA_ZOOM });
 const tooltipPanel = requireElement<HTMLDivElement>('#tooltipPanel');
 const inventoryPanel = requireElement<HTMLDivElement>('#inventoryPanel');
 const heroGoldText = requireElement<HTMLSpanElement>('#heroGoldText');
+const heroGoldGain = requireElement<HTMLSpanElement>('#heroGoldGain');
 const heroShardText = requireElement<HTMLSpanElement>('#heroShardText');
 const heroHealthBar = requireElement<HTMLDivElement>('#heroHealthBar');
 const heroHealthText = requireElement<HTMLSpanElement>('#heroHealthText');
@@ -301,6 +303,28 @@ const questDialogProgressFill = requireElement<HTMLDivElement>('#questDialogProg
 const questDialogPrimary = requireElement<HTMLButtonElement>('#questDialogPrimary');
 const questDialogSecondary = requireElement<HTMLButtonElement>('#questDialogSecondary');
 const questDialogCloseButton = requireElement<HTMLButtonElement>('#questDialogClose');
+
+let lastSupplies = game.getSupplies();
+let pendingGoldGain = 0;
+
+function resetGoldGainIndicator(): void {
+  pendingGoldGain = 0;
+  heroGoldGain.textContent = '';
+  heroGoldGain.classList.remove('resource-gain--active');
+}
+
+function showGoldGainIndicator(amount: number): void {
+  if (amount <= 0) {
+    return;
+  }
+  pendingGoldGain += amount;
+  heroGoldGain.textContent = `+${pendingGoldGain}`;
+  heroGoldGain.classList.remove('resource-gain--active');
+  void heroGoldGain.offsetWidth;
+  heroGoldGain.classList.add('resource-gain--active');
+}
+
+heroGoldGain.addEventListener('animationend', resetGoldGainIndicator);
 
 const inventorySlots: HTMLDivElement[] = [];
 for (let i = 0; i < INVENTORY_SLOTS; i++) {
@@ -965,6 +989,8 @@ window.addEventListener('keydown', (event) => {
     setItemShopOpen(false);
     tavernAutoOpen = false;
     updateItemShopButtons();
+    lastSupplies = game.getSupplies();
+    resetGoldGainIndicator();
   } else if (key === 'b') {
     event.preventDefault();
     setItemShopOpen(false);
@@ -1019,7 +1045,14 @@ window.addEventListener('keyup', (event) => {
 });
 
 function updateHud() {
-  heroGoldText.textContent = `${game.getSupplies()}`;
+  const supplies = game.getSupplies();
+  if (supplies > lastSupplies) {
+    showGoldGainIndicator(supplies - lastSupplies);
+  } else if (supplies < lastSupplies) {
+    resetGoldGainIndicator();
+  }
+  lastSupplies = supplies;
+  heroGoldText.textContent = `${supplies}`;
   heroShardText.textContent = `${game.getRelicShards()}`;
   const hp = Math.max(0, game.knight.hp);
   const hpRatio = Math.max(0, Math.min(1, hp / KNIGHT_HP));
