@@ -276,7 +276,7 @@ class Game:
         self.font = pygame.font.SysFont("consolas", 18)
         self.large_font = pygame.font.SysFont("consolas", 48)
 
-        self.knight = Knight(CASTLE_POS + pygame.math.Vector2(0, 120))
+        self.knight = Knight(CASTLE_POS)
         self.patrols: List[Patrol] = []
         self.dark_lord = DarkLord()
         self.state = "running"
