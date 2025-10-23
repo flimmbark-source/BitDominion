@@ -33,7 +33,7 @@ export const KNIGHT_ACCEL = 0.3;
 export const KNIGHT_FRICTION = 0.96;
 export const KNIGHT_SPEED = 1.0;
 export const KNIGHT_STOP_DISTANCE = 5;
-export const KNIGHT_HP = 5;
+export const KNIGHT_HP = 10;
 
 export const KNIGHT_SPEED_BOOST_MULTIPLIER = 1.15;
 export const KNIGHT_BOW_RANGE = 160;
