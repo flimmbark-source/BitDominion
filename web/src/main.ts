@@ -3,6 +3,7 @@ import { Game, CameraState, NearbyQuestInteraction, QuestLogEntry } from './game
 import {
   HEIGHT,
   WIDTH,
+  VIEWPORT_HEIGHT,
   KNIGHT_HP,
   BuildingType
 } from './config/constants';
@@ -152,7 +153,7 @@ appRootElement.innerHTML = `
 
 const canvas = requireElement<HTMLCanvasElement>('#gameCanvas');
 canvas.width = WIDTH;
-canvas.height = HEIGHT;
+canvas.height = VIEWPORT_HEIGHT;
 
 const context = canvas.getContext('2d');
 if (!context) {
@@ -167,7 +168,7 @@ function updateGameViewportSize(): void {
   const paddingY = parseFloat(appStyles.paddingTop) + parseFloat(appStyles.paddingBottom);
   const availableWidth = Math.max(0, window.innerWidth - paddingX);
   const availableHeight = Math.max(0, window.innerHeight - paddingY - GAME_SHELL_GAP);
-  const aspectRatio = WIDTH / HEIGHT;
+  const aspectRatio = WIDTH / VIEWPORT_HEIGHT;
 
   let targetWidth = availableWidth;
   let targetHeight = targetWidth / aspectRatio;
@@ -306,80 +307,27 @@ const questDialogPrimary = requireElement<HTMLButtonElement>('#questDialogPrimar
 const questDialogSecondary = requireElement<HTMLButtonElement>('#questDialogSecondary');
 const questDialogCloseButton = requireElement<HTMLButtonElement>('#questDialogClose');
 
-type ResourceId = 'supplies' | 'relicShards';
+let lastSupplies = game.getSupplies();
+let pendingGoldGain = 0;
 
-interface ResourceDisplay {
-  valueElement: HTMLSpanElement;
-  gainElement: HTMLSpanElement;
-  lastValue: number;
-  pendingGain: number;
+function resetGoldGainIndicator(): void {
+  pendingGoldGain = 0;
+  heroGoldGain.textContent = '';
+  heroGoldGain.classList.remove('resource-gain--active');
 }
 
-const resourceDisplays: Record<ResourceId, ResourceDisplay> = {
-  supplies: {
-    valueElement: heroGoldText,
-    gainElement: heroGoldGain,
-    lastValue: game.getSupplies(),
-    pendingGain: 0
-  },
-  relicShards: {
-    valueElement: heroShardText,
-    gainElement: heroShardGain,
-    lastValue: game.getRelicShards(),
-    pendingGain: 0
-  }
-};
-
-resourceDisplays.supplies.valueElement.textContent = `${resourceDisplays.supplies.lastValue}`;
-resourceDisplays.relicShards.valueElement.textContent = `${resourceDisplays.relicShards.lastValue}`;
-
-function resetResourceGain(resource: ResourceId): void {
-  const display = resourceDisplays[resource];
-  display.pendingGain = 0;
-  display.gainElement.textContent = '';
-  display.gainElement.classList.remove('resource-gain--active');
-}
-
-function showResourceGain(resource: ResourceId, amount: number): void {
+function showGoldGainIndicator(amount: number): void {
   if (amount <= 0) {
     return;
   }
-  const display = resourceDisplays[resource];
-  display.pendingGain += amount;
-  display.gainElement.textContent = `+${display.pendingGain}`;
-  display.gainElement.classList.remove('resource-gain--active');
-  void display.gainElement.offsetWidth;
-  display.gainElement.classList.add('resource-gain--active');
+  pendingGoldGain += amount;
+  heroGoldGain.textContent = `+${pendingGoldGain}`;
+  heroGoldGain.classList.remove('resource-gain--active');
+  void heroGoldGain.offsetWidth;
+  heroGoldGain.classList.add('resource-gain--active');
 }
 
-function updateResourceValue(resource: ResourceId, newValue: number): void {
-  const display = resourceDisplays[resource];
-  if (newValue > display.lastValue) {
-    showResourceGain(resource, newValue - display.lastValue);
-  } else if (newValue < display.lastValue) {
-    resetResourceGain(resource);
-  }
-  display.lastValue = newValue;
-  display.valueElement.textContent = `${newValue}`;
-}
-
-function resetResourceDisplays(): void {
-  const supplies = game.getSupplies();
-  resourceDisplays.supplies.lastValue = supplies;
-  resourceDisplays.supplies.valueElement.textContent = `${supplies}`;
-  resetResourceGain('supplies');
-
-  const relicShards = game.getRelicShards();
-  resourceDisplays.relicShards.lastValue = relicShards;
-  resourceDisplays.relicShards.valueElement.textContent = `${relicShards}`;
-  resetResourceGain('relicShards');
-}
-
-for (const id of Object.keys(resourceDisplays) as ResourceId[]) {
-  resourceDisplays[id].gainElement.addEventListener('animationend', () => {
-    resetResourceGain(id);
-  });
-}
+heroGoldGain.addEventListener('animationend', resetGoldGainIndicator);
 
 const inventorySlots: HTMLDivElement[] = [];
 for (let i = 0; i < INVENTORY_SLOTS; i++) {
@@ -396,6 +344,8 @@ const campMarkerEmpty = document.createElement('div');
 campMarkerEmpty.className = 'camp-marker-empty hidden';
 campMarkerEmpty.textContent = 'Scouts report no roaming packs.';
 campMarkerLayer.appendChild(campMarkerEmpty);
+const defeatedCampIds = new Set<number>();
+const campRemovalTimers = new Map<number, number>();
 
 function showTooltip(title: string, body: string) {
   tooltipPanel.innerHTML = `<div class="title">${title}</div><div>${body}</div>`;
@@ -494,9 +444,8 @@ function populateBuildingShop() {
       if (index >= 0) {
         game.selectBlueprint(index);
         game.setBuildMode(true);
+        hideBuildLedger();
         updateInventory();
-        updateBuildingShopButtons();
-        updateBuildPrompt();
       }
     });
     button.addEventListener('mouseenter', () =>
@@ -509,6 +458,10 @@ function populateBuildingShop() {
 }
 
 function updateBuildingShopButtons() {
+  if (!game.isBuildModeActive() && isBuildLedgerOpen) {
+    isBuildLedgerOpen = false;
+    hideTooltip();
+  }
   const supplies = game.getSupplies();
   const selected = game.getSelectedBlueprint();
   for (const [type, button] of buildingShopButtons.entries()) {
@@ -517,7 +470,8 @@ function updateBuildingShopButtons() {
     button.classList.toggle('disabled', !affordable);
     button.classList.toggle('selected', type === selected);
   }
-  buildingShopPanel.classList.toggle('hidden', !game.isBuildModeActive());
+  const shouldHide = !game.isBuildModeActive() || !isBuildLedgerOpen;
+  buildingShopPanel.classList.toggle('hidden', shouldHide);
   updateBuildPrompt();
 }
 
@@ -551,6 +505,36 @@ let isQuestLogOpen = false;
 let activeQuestDialog: NearbyQuestInteraction | null = null;
 const dismissedQuestInteractions = new Set<number>();
 let lastQuestInteractionGiverId: number | null = null;
+let isBuildLedgerOpen = false;
+
+function openBuildLedger(): void {
+  if (!game.isBuildModeActive()) {
+    game.setBuildMode(true);
+  }
+  if (!isBuildLedgerOpen) {
+    isBuildLedgerOpen = true;
+  }
+  updateBuildingShopButtons();
+}
+
+function hideBuildLedger(): void {
+  if (isBuildLedgerOpen) {
+    isBuildLedgerOpen = false;
+    hideTooltip();
+  }
+  updateBuildingShopButtons();
+}
+
+function disableBuildMode(): void {
+  if (game.isBuildModeActive()) {
+    game.setBuildMode(false);
+  }
+  if (isBuildLedgerOpen) {
+    isBuildLedgerOpen = false;
+    hideTooltip();
+  }
+  updateBuildingShopButtons();
+}
 
 function setItemShopOpen(open: boolean): void {
   const nextState = open && game.isDowntime();
@@ -563,8 +547,7 @@ function setItemShopOpen(open: boolean): void {
   }
   isItemShopOpen = nextState;
   if (isItemShopOpen && game.isBuildModeActive()) {
-    game.setBuildMode(false);
-    updateBuildingShopButtons();
+    disableBuildMode();
   }
   if (!isItemShopOpen) {
     hideTooltip();
@@ -626,7 +609,14 @@ function renderActivities(): void {
 
 function renderCamps(): void {
   const camps = game.getCreepCamps();
-  campMarkerEmpty.classList.toggle('hidden', camps.length > 0);
+  const highlightedCampIds = new Set(game.getNearbyCreepCampIds());
+  let activeCampCount = 0;
+  for (const camp of camps) {
+    if (!defeatedCampIds.has(camp.id)) {
+      activeCampCount += 1;
+    }
+  }
+  campMarkerEmpty.classList.toggle('hidden', activeCampCount > 0);
 
   const seen = new Set<number>();
   let scaleX = 1;
@@ -634,7 +624,7 @@ function renderCamps(): void {
   let offsetX = 0;
   let offsetY = 0;
 
-  if (camps.length > 0) {
+  if (activeCampCount > 0) {
     const canvasRect = canvas.getBoundingClientRect();
     const containerRect = gameContainerElement.getBoundingClientRect();
     scaleX = canvasRect.width / canvas.width;
@@ -644,6 +634,9 @@ function renderCamps(): void {
   }
 
   for (const camp of camps) {
+    if (defeatedCampIds.has(camp.id)) {
+      continue;
+    }
     seen.add(camp.id);
     let marker = campMarkers.get(camp.id);
     if (!marker) {
@@ -663,14 +656,15 @@ function renderCamps(): void {
     }
 
     const card = marker.querySelector<HTMLDivElement>('.activity-item');
-    card?.classList.toggle('completed', camp.cleared);
-
     const title = marker.querySelector<HTMLDivElement>('.activity-title');
+    const statusElement = marker.querySelector<HTMLDivElement>('.activity-subtext');
+
+    if (card) {
+      card.classList.toggle('completed', camp.cleared);
+    }
     if (title) {
       title.textContent = camp.name;
     }
-
-    const statusElement = marker.querySelector<HTMLDivElement>('.activity-subtext');
     if (statusElement) {
       const remaining = camp.unitIds.length;
       const shardLabel = camp.rewardRelicShards === 1 ? 'shard' : 'shards';
@@ -687,14 +681,50 @@ function renderCamps(): void {
     marker.style.left = `${cssX}px`;
     marker.style.top = `${cssY}px`;
 
+    const highlighted = highlightedCampIds.has(camp.id) && !camp.cleared;
+    if (highlighted) {
+      marker.classList.add('highlighted');
+      const radiusOffset = camp.radius * camera.zoom * scaleY + 12;
+      marker.style.transform = `translate(-50%, -100%) translateY(-${radiusOffset}px)`;
+    } else {
+      marker.classList.remove('highlighted');
+      marker.style.transform = 'translate(-50%, -100%)';
+    }
+
+    if (camp.cleared) {
+      if (card && !campRemovalTimers.has(camp.id)) {
+        card.classList.add('defeated');
+        marker.classList.add('defeated');
+        const removalDelay = 2100;
+        const timerId = window.setTimeout(() => {
+          const pendingCard = marker?.querySelector<HTMLDivElement>('.activity-item');
+          pendingCard?.classList.remove('defeated');
+          marker?.remove();
+          campMarkers.delete(camp.id);
+          campRemovalTimers.delete(camp.id);
+          defeatedCampIds.add(camp.id);
+        }, removalDelay);
+        campRemovalTimers.set(camp.id, timerId);
+      }
+    } else if (card) {
+      card.classList.remove('defeated');
+      marker.classList.remove('defeated');
+    }
+
     const visible = screenX >= 0 && screenX <= canvas.width && screenY >= 0 && screenY <= canvas.height;
     marker.classList.toggle('hidden', !visible);
   }
 
   for (const [campId, marker] of campMarkers.entries()) {
     if (!seen.has(campId)) {
+      const timerId = campRemovalTimers.get(campId);
+      if (timerId != null) {
+        window.clearTimeout(timerId);
+        campRemovalTimers.delete(campId);
+      }
       marker.remove();
       campMarkers.delete(campId);
+      defeatedCampIds.delete(campId);
     }
   }
 }
@@ -985,9 +1015,15 @@ canvas.addEventListener('contextmenu', (event) => {
 
 buildPrompt.addEventListener('click', () => {
   setItemShopOpen(false);
-  game.toggleBuildMode();
-  updateBuildingShopButtons();
-  updateBuildPrompt();
+  if (game.isBuildModeActive()) {
+    if (isBuildLedgerOpen) {
+      disableBuildMode();
+    } else {
+      openBuildLedger();
+    }
+  } else {
+    openBuildLedger();
+  }
 });
 
 buildPrompt.addEventListener('mouseenter', () => {
@@ -1032,6 +1068,11 @@ window.addEventListener('keydown', (event) => {
       event.preventDefault();
       return;
     }
+    if (game.isBuildModeActive()) {
+      disableBuildMode();
+      event.preventDefault();
+      return;
+    }
   }
 
   if (key === 'r') {
@@ -1044,13 +1085,20 @@ window.addEventListener('keydown', (event) => {
     setItemShopOpen(false);
     tavernAutoOpen = false;
     updateItemShopButtons();
-    resetResourceDisplays();
+    lastSupplies = game.getSupplies();
+    resetGoldGainIndicator();
   } else if (key === 'b') {
     event.preventDefault();
     setItemShopOpen(false);
-    game.toggleBuildMode();
-    updateBuildingShopButtons();
-    updateBuildPrompt();
+    if (game.isBuildModeActive()) {
+      if (isBuildLedgerOpen) {
+        disableBuildMode();
+      } else {
+        openBuildLedger();
+      }
+    } else {
+      openBuildLedger();
+    }
   } else if (key === 'i') {
     event.preventDefault();
     setItemShopOpen(!isItemShopOpen);
@@ -1099,8 +1147,15 @@ window.addEventListener('keyup', (event) => {
 });
 
 function updateHud() {
-  updateResourceValue('supplies', game.getSupplies());
-  updateResourceValue('relicShards', game.getRelicShards());
+  const supplies = game.getSupplies();
+  if (supplies > lastSupplies) {
+    showGoldGainIndicator(supplies - lastSupplies);
+  } else if (supplies < lastSupplies) {
+    resetGoldGainIndicator();
+  }
+  lastSupplies = supplies;
+  heroGoldText.textContent = `${supplies}`;
+  heroShardText.textContent = `${game.getRelicShards()}`;
   const hp = Math.max(0, game.knight.hp);
   const hpRatio = Math.max(0, Math.min(1, hp / KNIGHT_HP));
   heroHealthBar.style.width = `${hpRatio * 100}%`;

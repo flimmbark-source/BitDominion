@@ -2,18 +2,20 @@ import { Vector2 } from '../math/vector2';
 import { hexToRgb } from '../utils/color';
 
 export const WIDTH = 1600;
-export const HEIGHT = 800;
+export const VIEWPORT_HEIGHT = 800;
+export const WORLD_HEIGHT = 1200;
+export const HEIGHT = WORLD_HEIGHT;
 export const FPS = 60;
 
 export const ARENA_PADDING = 36;
 
 export const CASTLE_POS = new Vector2(WIDTH - 80, 80);
-export const KNIGHT_SPAWN_POS = new Vector2(WIDTH / 2, HEIGHT / 2);
+export const KNIGHT_SPAWN_POS = new Vector2(WIDTH / 2, WORLD_HEIGHT / 2);
 export const CASTLE_SIZE = 20;
 export const CASTLE_WIN_RADIUS = 25;
 export const CASTLE_STAY_TIME = 3.0;
 
-export const TAVERN_POS = new Vector2(WIDTH / 2 + 200, HEIGHT / 2);
+export const TAVERN_POS = new Vector2(WIDTH / 2 + 200, WORLD_HEIGHT / 2);
 export const TAVERN_RADIUS = 34;
 export const TAVERN_INTERACT_RADIUS = 70;
 export const TAVERN_BASE_COLOR = '#78350f';
@@ -33,7 +35,7 @@ export const KNIGHT_ACCEL = 0.3;
 export const KNIGHT_FRICTION = 0.96;
 export const KNIGHT_SPEED = 1.0;
 export const KNIGHT_STOP_DISTANCE = 5;
-export const KNIGHT_HP = 5;
+export const KNIGHT_HP = 10;
 
 export const KNIGHT_SPEED_BOOST_MULTIPLIER = 1.15;
 export const KNIGHT_BOW_RANGE = 160;
@@ -290,3 +292,6 @@ export const BUILDING_ATTACK_INTERVAL = 0.5;
 export const ENEMY_BUILDING_TARGET_RANGE = 180;
 export const ENEMY_BUILDING_TARGET_CHANCE = 0.3;
 export const ENEMY_BUILDING_FOCUS_TIME = 4.0;
+export const ENEMY_PROJECTILE_SPEED = 260;
+export const ENEMY_PROJECTILE_MAX_DISTANCE = 160;
+export const ENEMY_PROJECTILE_RADIUS = 2.5;

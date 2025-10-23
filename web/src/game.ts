@@ -109,7 +109,8 @@ import {
   CLOAK_FIELD_RADIUS,
   CLOAK_FIELD_SLOW,
   CLOAK_FIELD_DURATION,
-  CLOAK_FIELD_CLOAK_TIME
+  CLOAK_FIELD_CLOAK_TIME,
+  ENEMY_PROJECTILE_RADIUS
 } from './config/constants';
 import { DarkLordAI } from './ai/darkLordAI';
 import { DarkUnit, DarkUnitAllegiance } from './entities/darkUnit';
@@ -124,6 +125,7 @@ import { Knight } from './entities/knight';
 import { Seal } from './entities/seal';
 import { Vector2 } from './math/vector2';
 import { World } from './world';
+import type { Villager } from './world';
 import { ITEM_DEFINITIONS, ItemId } from './config/items';
 
 export interface CameraState {
@@ -170,10 +172,22 @@ interface KnightProjectile {
   tint?: string;
 }
 
+interface DarkProjectile {
+  id: number;
+  position: Vector2;
+  velocity: Vector2;
+  damage: number;
+  radius: number;
+  travelled: number;
+  maxDistance: number;
+  sourceUnitId: number;
+}
+
 type GamePhase = 'downtime' | 'wave';
 type QuestType = 'escort' | 'retrieve';
 
 const QUEST_INTERACTION_RADIUS = 96;
+const CREEP_APPROACH_BUFFER = 80;
 
 interface QuestReward {
   supplies: number;
@@ -316,6 +330,7 @@ export class Game {
   private buildings: BuildingInstance[] = [];
   private projectiles: TowerProjectile[] = [];
   private knightProjectiles: KnightProjectile[] = [];
+  private darkProjectiles: DarkProjectile[] = [];
   private buildMode = false;
   private buildSelection: BuildingType = 'watchtower';
   private buildCursor: Vector2 | null = null;
@@ -323,6 +338,7 @@ export class Game {
   private hasWorkshopTech = false;
   private projectileIdCounter = 1;
   private knightProjectileIdCounter = 1;
+  private darkProjectileIdCounter = 1;
   private readonly buildOrder: BuildingType[] = ['watchtower', 'barricade', 'spike', 'beacon', 'workshop'];
   private canvasHudEnabled = true;
   private ownedItems: Set<ItemId> = new Set();
@@ -352,6 +368,7 @@ export class Game {
   private rescueMasteryBonus = 0;
   private waveRallyPoint: Vector2 | null = null;
   private knightInTavern = false;
+  private nearbyCreepCampIds: Set<number> = new Set();
 
   constructor() {
     this.world = new World();
@@ -383,6 +400,7 @@ export class Game {
     this.supplyTimer = 0;
     this.buildings = [];
     this.projectiles = [];
+    this.darkProjectiles = [];
     this.buildMode = false;
     this.buildSelection = 'watchtower';
     this.buildCursor = null;
@@ -390,6 +408,7 @@ export class Game {
     this.hasWorkshopTech = false;
     this.projectileIdCounter = 1;
     this.knightProjectileIdCounter = 1;
+    this.darkProjectileIdCounter = 1;
     this._initializeQuestGivers();
     this._initializeKnightLoadout();
     this.shieldWasActive = this._isShieldActive();
@@ -419,6 +438,7 @@ export class Game {
     this.rescueMasteryBonus = 0;
     this.waveRallyPoint = null;
     this.knightInTavern = false;
+    this.nearbyCreepCampIds.clear();
     this._enterDowntime();
   }
 
@@ -639,6 +659,10 @@ export class Game {
 
   getCreepCamps(): readonly CreepCamp[] {
     return this.creepCamps;
+  }
+
+  getNearbyCreepCampIds(): readonly number[] {
+    return Array.from(this.nearbyCreepCampIds);
   }
 
   getTemporaryBuffs(): readonly TemporaryBuff[] {
@@ -1048,6 +1072,7 @@ export class Game {
     this._updateBuildings(dt);
     this._updateDismantle(dt);
     this._updateProjectiles(dt);
+    this._updateDarkProjectiles(dt);
     this._updateKnightProjectiles(dt);
     this._updateSmokeFields(dt);
 
@@ -1112,6 +1137,7 @@ export class Game {
     this._drawCastle(ctx);
     this._drawBuildings(ctx);
     this._drawTavernInteraction(ctx);
+    this._drawCreepLairHighlights(ctx);
 
     for (const seal of this.seals) {
       seal.draw(ctx);
@@ -1122,6 +1148,7 @@ export class Game {
     }
 
     this._drawProjectiles(ctx);
+    this._drawDarkProjectiles(ctx);
     this._drawKnightProjectiles(ctx);
     this._drawSmokeFields(ctx);
     this._drawWeaponOrbits(ctx);
@@ -1158,6 +1185,7 @@ export class Game {
     this.weaponOrbitVisuals = [];
     this.smokeFields = [];
     this.waveRallyPoint = null;
+    this.nearbyCreepCampIds.clear();
     this._generateDowntimeActivities();
   }
 
@@ -1169,6 +1197,7 @@ export class Game {
     this.phaseTimer = WAVE_DURATION;
     this.waveIndex += 1;
     this.creepCamps = [];
+    this.nearbyCreepCampIds.clear();
     this.weaponOrbitVisuals = [];
     this.smokeFields = [];
     this._expireTemporaryBuffs();
@@ -1310,6 +1339,28 @@ export class Game {
       ctx.beginPath();
       ctx.arc(tavern.position.x, tavern.position.y, tavern.interactRadius, 0, Math.PI * 2);
       ctx.fill();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  private _drawCreepLairHighlights(ctx: CanvasRenderingContext2D): void {
+    if (!this.nearbyCreepCampIds.size) {
+      return;
+    }
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 8]);
+    ctx.strokeStyle = 'rgba(252, 211, 77, 0.85)';
+    ctx.fillStyle = 'rgba(252, 211, 77, 0.15)';
+    for (const camp of this.creepCamps) {
+      if (camp.cleared || !this.nearbyCreepCampIds.has(camp.id)) {
+        continue;
+      }
+      ctx.beginPath();
+      ctx.arc(camp.position.x, camp.position.y, camp.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
     ctx.setLineDash([]);
     ctx.restore();
@@ -1506,8 +1557,10 @@ export class Game {
 
   private _updateCreepCamps(_dt: number): void {
     if (!this.creepCamps.length) {
+      this.nearbyCreepCampIds.clear();
       return;
     }
+    this.nearbyCreepCampIds.clear();
     for (const camp of this.creepCamps) {
       if (camp.cleared) {
         continue;
@@ -1520,6 +1573,10 @@ export class Game {
         }
       }
       camp.unitIds = survivors;
+      const distanceToKnight = camp.position.distanceTo(this.knight.pos);
+      if (distanceToKnight <= camp.radius + CREEP_APPROACH_BUFFER) {
+        this.nearbyCreepCampIds.add(camp.id);
+      }
       if (!camp.unitIds.length) {
         this._completeCreepCamp(camp);
       }
@@ -2151,6 +2208,33 @@ export class Game {
     }
   }
 
+  private _drawDarkProjectiles(ctx: CanvasRenderingContext2D): void {
+    if (!this.darkProjectiles.length) {
+      return;
+    }
+    ctx.save();
+    ctx.strokeStyle = 'rgba(200, 170, 255, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.fillStyle = '#d8c6ff';
+    for (const projectile of this.darkProjectiles) {
+      const direction = projectile.velocity.clone();
+      const speed = direction.length();
+      if (speed > 0) {
+        direction.scale(1 / speed);
+        const tail = projectile.position.clone().subtract(direction.clone().scale(projectile.radius * 2.5));
+        ctx.beginPath();
+        ctx.moveTo(projectile.position.x, projectile.position.y);
+        ctx.lineTo(tail.x, tail.y);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(projectile.position.x, projectile.position.y, projectile.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   private _drawBuildPreview(ctx: CanvasRenderingContext2D): void {
     if (!this.buildMode || !this.buildCursor) {
       return;
@@ -2207,7 +2291,7 @@ export class Game {
     ctx.font = '14px Consolas, monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
-    ctx.fillText(helperText, WIDTH / 2, HEIGHT - 12);
+    ctx.fillText(helperText, ctx.canvas.width / 2, ctx.canvas.height - 12);
 
     ctx.restore();
   }
@@ -2565,6 +2649,103 @@ export class Game {
     this.projectiles = survivors;
   }
 
+  private _updateDarkProjectiles(dt: number): void {
+    if (!this.darkProjectiles.length) {
+      return;
+    }
+
+    const survivors: DarkProjectile[] = [];
+    for (const projectile of this.darkProjectiles) {
+      const velocity = projectile.velocity.clone();
+      const speed = velocity.length();
+      if (speed <= 0) {
+        continue;
+      }
+
+      const direction = velocity.scale(1 / speed);
+      const remaining = projectile.maxDistance - projectile.travelled;
+      if (remaining <= 0) {
+        continue;
+      }
+
+      const step = Math.min(speed * dt, remaining);
+      const obstacleDistance = this.world.raycastObstacles(projectile.position, direction, step);
+      const travel = Math.min(step, obstacleDistance);
+      projectile.position.add(direction.clone().scale(travel));
+      projectile.travelled += travel;
+
+      if (obstacleDistance + 0.001 < step) {
+        continue;
+      }
+
+      let hit = false;
+      if (this.knight.hp > 0) {
+        const knightRadius = KNIGHT_SIZE / 2;
+        if (projectile.position.distanceTo(this.knight.pos) <= knightRadius + projectile.radius) {
+          this.knight.hp = Math.max(0, this.knight.hp - projectile.damage);
+          hit = true;
+        }
+      }
+
+      if (!hit) {
+        const villager = this._findVillagerHit(projectile.position, projectile.radius);
+        if (villager) {
+          this.world.damageVillager(villager, projectile.damage);
+          hit = true;
+        }
+      }
+
+      if (hit) {
+        continue;
+      }
+
+      if (
+        projectile.position.x < 0 ||
+        projectile.position.x > WIDTH ||
+        projectile.position.y < 0 ||
+        projectile.position.y > HEIGHT
+      ) {
+        continue;
+      }
+
+      if (projectile.travelled >= projectile.maxDistance - 0.001) {
+        continue;
+      }
+
+      survivors.push(projectile);
+    }
+
+    this.darkProjectiles = survivors;
+  }
+
+  spawnDarkProjectile(options: {
+    position: Vector2;
+    direction: Vector2;
+    damage: number;
+    speed: number;
+    maxDistance: number;
+    radius?: number;
+    sourceUnitId: number;
+  }): void {
+    const direction = options.direction.clone();
+    if (direction.lengthSq() === 0) {
+      return;
+    }
+    direction.normalize();
+    const velocity = direction.clone().scale(options.speed);
+    const projectile: DarkProjectile = {
+      id: this.darkProjectileIdCounter++,
+      position: options.position.clone(),
+      velocity,
+      damage: options.damage,
+      radius: options.radius ?? ENEMY_PROJECTILE_RADIUS,
+      travelled: 0,
+      maxDistance: options.maxDistance,
+      sourceUnitId: options.sourceUnitId
+    };
+    this.darkProjectiles.push(projectile);
+  }
+
   private _spawnKnightProjectile(options: {
     position: Vector2;
     velocity: Vector2;
@@ -2665,6 +2846,21 @@ export class Game {
     }
 
     this.knightProjectiles = survivors;
+  }
+
+  private _findVillagerHit(position: Vector2, radius: number): Villager | null {
+    const villages = this.world.getVillages();
+    for (const village of villages) {
+      for (const villager of village.villagers) {
+        if (!villager.alive) {
+          continue;
+        }
+        if (villager.pos.distanceTo(position) <= radius + 3) {
+          return villager;
+        }
+      }
+    }
+    return null;
   }
 
   private _findKnightProjectileHit(projectile: KnightProjectile): DarkUnit | null {
@@ -2972,18 +3168,19 @@ export class Game {
   }
 
   private _drawOverlay(ctx: CanvasRenderingContext2D, text: string, color: string, subtitle: string): void {
+    const { width, height } = ctx.canvas;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
-    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.fillRect(0, 0, width, height);
 
     ctx.fillStyle = color;
     ctx.font = '48px Consolas, monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, WIDTH / 2, HEIGHT / 2 - 30);
+    ctx.fillText(text, width / 2, height / 2 - 30);
 
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '20px Consolas, monospace';
-    ctx.fillText(subtitle, WIDTH / 2, HEIGHT / 2 + 20);
+    ctx.fillText(subtitle, width / 2, height / 2 + 20);
 
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
