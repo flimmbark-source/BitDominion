@@ -12,7 +12,7 @@ import {
   TAVERN_POS,
   TAVERN_RADIUS,
   TAVERN_ROOF_COLOR,
-  HEIGHT,
+  WORLD_HEIGHT,
   HUT_FILL_COLOR,
   HUT_OUTLINE_COLOR,
   HUT_STEER_STRENGTH,
@@ -319,7 +319,7 @@ export class World {
     const minX = radius;
     const minY = radius;
     const maxX = WIDTH - radius;
-    const maxY = HEIGHT - radius;
+    const maxY = WORLD_HEIGHT - radius;
     position.clamp(minX, minY, maxX, maxY);
   }
 
@@ -328,7 +328,7 @@ export class World {
     const minX = radius;
     const minY = radius;
     const maxX = WIDTH - radius;
-    const maxY = HEIGHT - radius;
+    const maxY = WORLD_HEIGHT - radius;
 
     if (entity.pos.x < minX) {
       entity.pos.x = minX;
@@ -519,26 +519,31 @@ export class World {
   }
 
   private buildForests(rand: () => number): void {
-    const columns = 11;
-    const rows = 11;
+    const targetCellWidth = 140;
+    const targetCellHeight = 70;
+    const verticalScale = WORLD_HEIGHT / 800;
+    const columns = Math.max(1, Math.round((WIDTH - ARENA_PADDING * 2) / targetCellWidth));
+    const rows = Math.max(1, Math.round((WORLD_HEIGHT - ARENA_PADDING * 2) / targetCellHeight));
     const cellWidth = (WIDTH - ARENA_PADDING * 2) / columns;
-    const cellHeight = (HEIGHT - ARENA_PADDING * 2) / rows;
+    const cellHeight = (WORLD_HEIGHT - ARENA_PADDING * 2) / rows;
     const treePadding = 4.5;
     const castleClearRadius = CASTLE_WIN_RADIUS + 35;
 
-    const denseZones = Array.from({ length: 7 }, () => ({
+    const denseZoneCount = Math.max(7, Math.round(7 * verticalScale));
+    const denseZones = Array.from({ length: denseZoneCount }, () => ({
       center: new Vector2(
         ARENA_PADDING + rand() * (WIDTH - ARENA_PADDING * 2),
-        ARENA_PADDING + rand() * (HEIGHT - ARENA_PADDING * 2)
+        ARENA_PADDING + rand() * (WORLD_HEIGHT - ARENA_PADDING * 2)
       ),
       radius: 140 + rand() * 90,
       strength: 0.6 + rand() * 0.35
     }));
 
-    const sparseZones = Array.from({ length: 4 }, () => ({
+    const sparseZoneCount = Math.max(4, Math.round(4 * verticalScale));
+    const sparseZones = Array.from({ length: sparseZoneCount }, () => ({
       center: new Vector2(
         ARENA_PADDING + rand() * (WIDTH - ARENA_PADDING * 2),
-        ARENA_PADDING + rand() * (HEIGHT - ARENA_PADDING * 2)
+        ARENA_PADDING + rand() * (WORLD_HEIGHT - ARENA_PADDING * 2)
       ),
       radius: 160 + rand() * 110,
       strength: 0.5 + rand() * 0.25
@@ -597,7 +602,7 @@ export class World {
             const offset = new Vector2((rand() - 0.5) * cellWidth * 0.95, (rand() - 0.5) * cellHeight * 0.95);
             const position = cellCenter.clone().add(offset);
             position.x = clamp(position.x, ARENA_PADDING, WIDTH - ARENA_PADDING);
-            position.y = clamp(position.y, ARENA_PADDING, HEIGHT - ARENA_PADDING);
+            position.y = clamp(position.y, ARENA_PADDING, WORLD_HEIGHT - ARENA_PADDING);
             const treeRadius = 12 + rand() * 8;
 
             if (this.canPlaceTree(position, treeRadius, Math.max(2, localPadding), castleClearRadius)) {
@@ -613,7 +618,7 @@ export class World {
     for (let i = 0; i < scatterAttempts; i++) {
       const position = new Vector2(
         ARENA_PADDING + rand() * (WIDTH - ARENA_PADDING * 2),
-        ARENA_PADDING + rand() * (HEIGHT - ARENA_PADDING * 2)
+        ARENA_PADDING + rand() * (WORLD_HEIGHT - ARENA_PADDING * 2)
       );
       const scatterRadius = 10 + rand() * 8;
       const scatterPadding = treePadding * 0.75;
@@ -656,7 +661,7 @@ export class World {
   private buildVillages(rand: () => number): void {
     const templates: Array<{ center: Vector2; hutOffsets: Vector2[]; chestOffsets: Vector2[]; villagers: number }> = [
       {
-        center: new Vector2(210, 520),
+        center: new Vector2(210, WORLD_HEIGHT * 0.65),
         hutOffsets: [
           new Vector2(-26, -12),
           new Vector2(22, -14),
@@ -668,7 +673,7 @@ export class World {
         villagers: 5
       },
       {
-        center: new Vector2(590, 340),
+        center: new Vector2(590, WORLD_HEIGHT * 0.425),
         hutOffsets: [
           new Vector2(-28, -18),
           new Vector2(24, -12),
@@ -678,6 +683,19 @@ export class World {
         ],
         chestOffsets: [new Vector2(-18, 6), new Vector2(24, -24)],
         villagers: 4
+      },
+      {
+        center: new Vector2(WIDTH - 260, WORLD_HEIGHT * 0.86),
+        hutOffsets: [
+          new Vector2(-30, -18),
+          new Vector2(26, -16),
+          new Vector2(-24, 22),
+          new Vector2(24, 28),
+          new Vector2(0, 40),
+          new Vector2(-18, 36)
+        ],
+        chestOffsets: [new Vector2(-22, 10), new Vector2(26, -28)],
+        villagers: 6
       }
     ];
 

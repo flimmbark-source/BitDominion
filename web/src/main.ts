@@ -3,6 +3,7 @@ import { Game, CameraState, NearbyQuestInteraction, QuestLogEntry } from './game
 import {
   HEIGHT,
   WIDTH,
+  VIEWPORT_HEIGHT,
   KNIGHT_HP,
   BuildingType
 } from './config/constants';
@@ -151,7 +152,7 @@ appRootElement.innerHTML = `
 
 const canvas = requireElement<HTMLCanvasElement>('#gameCanvas');
 canvas.width = WIDTH;
-canvas.height = HEIGHT;
+canvas.height = VIEWPORT_HEIGHT;
 
 const context = canvas.getContext('2d');
 if (!context) {
@@ -166,7 +167,7 @@ function updateGameViewportSize(): void {
   const paddingY = parseFloat(appStyles.paddingTop) + parseFloat(appStyles.paddingBottom);
   const availableWidth = Math.max(0, window.innerWidth - paddingX);
   const availableHeight = Math.max(0, window.innerHeight - paddingY - GAME_SHELL_GAP);
-  const aspectRatio = WIDTH / HEIGHT;
+  const aspectRatio = WIDTH / VIEWPORT_HEIGHT;
 
   let targetWidth = availableWidth;
   let targetHeight = targetWidth / aspectRatio;
