@@ -189,6 +189,39 @@ body {
   align-items: center;
   gap: 12px;
   width: 100%;
+  position: relative;
+}
+
+.resource-gain {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -8px);
+  font-weight: 700;
+  font-size: 16px;
+  color: #fef9c3;
+  opacity: 0;
+  pointer-events: none;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  will-change: transform, opacity;
+}
+
+.resource-gain--active {
+  animation: resourceGainFloat 1.2s ease-out forwards;
+}
+
+@keyframes resourceGainFloat {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -8px);
+  }
+  60% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -32px);
+  }
 }
 
 .stat-label {
