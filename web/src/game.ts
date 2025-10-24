@@ -74,7 +74,6 @@ import {
   DOWNTIME_DURATION,
   WAVE_DURATION,
   QUEST_RADIUS,
-  QUEST_COMPLETION_TIME,
   QUEST_REWARD_SUPPLIES,
   QUEST_REWARD_BUFF_MULTIPLIER,
   QUEST_REWARD_SPEED_BONUS,
@@ -110,7 +109,8 @@ import {
   CLOAK_FIELD_SLOW,
   CLOAK_FIELD_DURATION,
   CLOAK_FIELD_CLOAK_TIME,
-  ENEMY_PROJECTILE_RADIUS
+  ENEMY_PROJECTILE_RADIUS,
+  VILLAGER_SPEED
 } from './config/constants';
 import { DarkLordAI } from './ai/darkLordAI';
 import { DarkUnit, DarkUnitAllegiance } from './entities/darkUnit';
@@ -195,6 +195,66 @@ interface QuestReward {
   description: string;
 }
 
+interface QuestMarker {
+  id: number;
+  questId: number;
+  icon: string;
+  position: Vector2;
+  visible: boolean;
+}
+
+type QuestObjectiveTemplate = EscortObjectiveTemplate | RetrieveObjectiveTemplate;
+
+interface QuestObjectiveBase {
+  id: number;
+  questId: number;
+  type: QuestType;
+  markerId: number | null;
+  state: 'pending' | 'completed';
+  progress: number;
+  required: number;
+}
+
+interface EscortObjectiveTemplate {
+  type: 'escort';
+  spawnPoint: Vector2;
+  destination: Vector2;
+  npcCount: number;
+  escortSpeed: number;
+}
+
+interface EscortNpcState {
+  id: number;
+  position: Vector2;
+  state: 'waiting' | 'moving' | 'arrived';
+  speed: number;
+  arrivalRadius: number;
+}
+
+interface EscortQuestObjective extends QuestObjectiveBase {
+  type: 'escort';
+  destination: Vector2;
+  npcs: EscortNpcState[];
+}
+
+interface QuestPickupState {
+  id: number;
+  position: Vector2;
+  pickedUp: boolean;
+}
+
+interface RetrieveObjectiveTemplate {
+  type: 'retrieve';
+  spawnPoint: Vector2;
+}
+
+interface RetrieveQuestObjective extends QuestObjectiveBase {
+  type: 'retrieve';
+  pickup: QuestPickupState;
+}
+
+type QuestObjectiveState = EscortQuestObjective | RetrieveQuestObjective;
+
 interface Quest {
   id: number;
   giverId: number;
@@ -207,6 +267,8 @@ interface Quest {
   description: string;
   icon: string;
   reward: QuestReward;
+  objectiveTemplate: QuestObjectiveTemplate;
+  objectives: QuestObjectiveState[];
 }
 
 interface CreepCamp {
@@ -353,6 +415,10 @@ export class Game {
   private questIdCounter = 1;
   private creepCampIdCounter = 1;
   private questGiverIdCounter = 1;
+  private questMarkers: QuestMarker[] = [];
+  private questMarkerIdCounter = 1;
+  private questObjectiveIdCounter = 1;
+  private questEntityIdCounter = 1;
   private temporaryBuffs: TemporaryBuff[] = [];
   private weaponDamageBonus = 0;
   private temporarySpeedBonus = 0;
@@ -423,6 +489,10 @@ export class Game {
     this.creepCamps = [];
     this.questIdCounter = 1;
     this.creepCampIdCounter = 1;
+    this.questMarkers = [];
+    this.questMarkerIdCounter = 1;
+    this.questObjectiveIdCounter = 1;
+    this.questEntityIdCounter = 1;
     this.temporaryBuffs = [];
     this.weaponDamageBonus = 0;
     this.temporarySpeedBonus = 0;
@@ -625,6 +695,8 @@ export class Game {
     const quest = giver.questOffer;
     quest.state = 'active';
     quest.progress = 0;
+    this._activateQuestObjectives(quest);
+    this._refreshQuestProgress(quest);
     this.quests.push(quest);
     giver.activeQuestId = quest.id;
     giver.questOffer = null;
@@ -1158,6 +1230,8 @@ export class Game {
 
     this.world.drawCanopy(ctx);
     this.world.drawVillageAlarms(ctx);
+    this._drawQuestObjectives(ctx);
+    this._drawQuestMarkers(ctx);
     this._drawQuestGivers(ctx);
     this._drawNoisePings(ctx);
     this._drawBuildPreview(ctx);
@@ -1237,6 +1311,20 @@ export class Game {
     const questId = this.questIdCounter++;
     const position = this._chooseQuestLocation(type, villageIndex);
     const reward = this._createQuestReward(type, questId);
+    const objectiveTemplate: QuestObjectiveTemplate =
+      type === 'escort'
+        ? {
+            type: 'escort',
+            spawnPoint: position.clone(),
+            destination: CASTLE_POS.clone(),
+            npcCount: 3,
+            escortSpeed: VILLAGER_SPEED
+          }
+        : {
+            type: 'retrieve',
+            spawnPoint: position.clone()
+          };
+    const requiredTime = objectiveTemplate.type === 'escort' ? objectiveTemplate.npcCount : 1;
     const description =
       type === 'escort'
         ? 'Escort the villagers safely back toward the sanctuary.'
@@ -1248,12 +1336,14 @@ export class Game {
       type,
       position,
       radius: QUEST_RADIUS,
-      requiredTime: QUEST_COMPLETION_TIME,
+      requiredTime,
       progress: 0,
       state: 'available',
       description,
       icon,
-      reward
+      reward,
+      objectiveTemplate,
+      objectives: []
     };
   }
 
@@ -1277,6 +1367,214 @@ export class Game {
     }
   }
 
+  private _activateQuestObjectives(quest: Quest): void {
+    quest.objectives = [];
+    const template = quest.objectiveTemplate;
+    switch (template.type) {
+      case 'escort':
+        quest.objectives.push(this._instantiateEscortObjective(quest, template));
+        break;
+      case 'retrieve':
+        quest.objectives.push(this._instantiateRetrieveObjective(quest, template));
+        break;
+      default:
+        break;
+    }
+  }
+
+  private _instantiateEscortObjective(
+    quest: Quest,
+    template: EscortObjectiveTemplate
+  ): EscortQuestObjective {
+    const markerId = this._createQuestMarker(template.spawnPoint, quest.id, quest.icon);
+    const npcs: EscortNpcState[] = [];
+    for (let i = 0; i < template.npcCount; i++) {
+      const angle = (i / Math.max(1, template.npcCount)) * Math.PI * 2;
+      const offset = new Vector2(Math.cos(angle), Math.sin(angle)).scale(12);
+      const spawn = template.spawnPoint.clone().add(offset);
+      npcs.push({
+        id: this.questEntityIdCounter++,
+        position: spawn,
+        state: 'waiting',
+        speed: template.escortSpeed,
+        arrivalRadius: 24
+      });
+    }
+    return {
+      id: this.questObjectiveIdCounter++,
+      questId: quest.id,
+      type: 'escort',
+      markerId,
+      state: 'pending',
+      destination: template.destination.clone(),
+      npcs,
+      progress: 0,
+      required: npcs.length
+    };
+  }
+
+  private _instantiateRetrieveObjective(
+    quest: Quest,
+    template: RetrieveObjectiveTemplate
+  ): RetrieveQuestObjective {
+    const markerId = this._createQuestMarker(template.spawnPoint, quest.id, quest.icon);
+    const pickup: QuestPickupState = {
+      id: this.questEntityIdCounter++,
+      position: template.spawnPoint.clone(),
+      pickedUp: false
+    };
+    return {
+      id: this.questObjectiveIdCounter++,
+      questId: quest.id,
+      type: 'retrieve',
+      markerId,
+      state: 'pending',
+      pickup,
+      progress: 0,
+      required: 1
+    };
+  }
+
+  private _createQuestMarker(position: Vector2, questId: number, icon: string): number {
+    const marker: QuestMarker = {
+      id: this.questMarkerIdCounter++,
+      questId,
+      icon,
+      position: position.clone(),
+      visible: true
+    };
+    this.questMarkers.push(marker);
+    return marker.id;
+  }
+
+  private _getQuestMarker(markerId: number | null): QuestMarker | null {
+    if (markerId == null) {
+      return null;
+    }
+    return this.questMarkers.find((marker) => marker.id === markerId) ?? null;
+  }
+
+  private _updateQuestMarkerPosition(markerId: number | null, position: Vector2): void {
+    const marker = this._getQuestMarker(markerId);
+    if (!marker) {
+      return;
+    }
+    marker.position.copy(position);
+  }
+
+  private _removeQuestMarker(markerId: number | null): void {
+    if (markerId == null) {
+      return;
+    }
+    const index = this.questMarkers.findIndex((marker) => marker.id === markerId);
+    if (index >= 0) {
+      this.questMarkers.splice(index, 1);
+    }
+  }
+
+  private _refreshQuestProgress(quest: Quest): void {
+    if (!quest.objectives.length) {
+      quest.progress = 0;
+      quest.requiredTime = 1;
+      return;
+    }
+    let totalRequired = 0;
+    let totalProgress = 0;
+    for (const objective of quest.objectives) {
+      totalRequired += objective.required;
+      totalProgress += objective.progress;
+    }
+    quest.requiredTime = Math.max(1, totalRequired);
+    quest.progress = Math.min(totalProgress, quest.requiredTime);
+  }
+
+  private _cleanupQuestObjectives(quest: Quest): void {
+    if (!quest.objectives.length) {
+      return;
+    }
+    for (const objective of quest.objectives) {
+      if (objective.markerId != null) {
+        this._removeQuestMarker(objective.markerId);
+        objective.markerId = null;
+      }
+    }
+  }
+
+  private _updateEscortObjective(objective: EscortQuestObjective, dt: number): void {
+    let arrivedCount = 0;
+    let markerPosition: Vector2 | null = null;
+    for (const npc of objective.npcs) {
+      if (npc.state === 'arrived') {
+        arrivedCount += 1;
+        continue;
+      }
+      if (!markerPosition) {
+        markerPosition = npc.position;
+      }
+      const distanceToKnight = npc.position.distanceTo(this.knight.pos);
+      if (distanceToKnight <= QUEST_INTERACTION_RADIUS) {
+        npc.state = 'moving';
+      }
+      if (npc.state === 'moving') {
+        const toDestination = objective.destination.clone().subtract(npc.position);
+        const distanceToDestination = toDestination.length();
+        if (distanceToDestination <= npc.arrivalRadius) {
+          npc.position.copy(objective.destination);
+          npc.state = 'arrived';
+          arrivedCount += 1;
+          continue;
+        }
+        if (distanceToDestination > 0) {
+          toDestination.normalize();
+          const step = Math.min(distanceToDestination, npc.speed * dt);
+          npc.position.add(toDestination.scale(step));
+        }
+      }
+    }
+    if (markerPosition && objective.markerId != null) {
+      this._updateQuestMarkerPosition(objective.markerId, markerPosition);
+    }
+    objective.progress = arrivedCount;
+    objective.required = Math.max(1, objective.npcs.length);
+    if (arrivedCount >= objective.npcs.length) {
+      objective.state = 'completed';
+      if (objective.markerId != null) {
+        this._removeQuestMarker(objective.markerId);
+        objective.markerId = null;
+      }
+    } else {
+      objective.state = 'pending';
+    }
+  }
+
+  private _updateRetrieveObjective(objective: RetrieveQuestObjective): void {
+    if (objective.pickup.pickedUp) {
+      objective.progress = objective.required;
+      objective.state = 'completed';
+      if (objective.markerId != null) {
+        this._removeQuestMarker(objective.markerId);
+        objective.markerId = null;
+      }
+      return;
+    }
+    if (objective.markerId != null) {
+      this._updateQuestMarkerPosition(objective.markerId, objective.pickup.position);
+    }
+    const distance = objective.pickup.position.distanceTo(this.knight.pos);
+    if (distance <= QUEST_INTERACTION_RADIUS * 0.75) {
+      objective.pickup.pickedUp = true;
+      objective.progress = objective.required;
+      objective.state = 'completed';
+      if (objective.markerId != null) {
+        this._removeQuestMarker(objective.markerId);
+        objective.markerId = null;
+      }
+    } else {
+      objective.progress = 0;
+      objective.state = 'pending';
+    }
+  }
+
   private _resolveQuestGiverState(giver: QuestGiver): {
     state: QuestGiverStatus['state'];
     activeQuest: Quest | null;
@@ -1292,6 +1590,81 @@ export class Game {
       };
     }
     return { state: giver.questOffer ? 'offering' : 'waiting', activeQuest: null };
+  }
+
+  private _drawQuestObjectives(ctx: CanvasRenderingContext2D): void {
+    if (!this.quests.length) {
+      return;
+    }
+    ctx.save();
+    for (const quest of this.quests) {
+      if (quest.state !== 'active') {
+        continue;
+      }
+      for (const objective of quest.objectives) {
+        if (objective.type === 'escort') {
+          for (const npc of objective.npcs) {
+            ctx.globalAlpha = npc.state === 'arrived' ? 0.5 : 0.95;
+            ctx.fillStyle = npc.state === 'arrived' ? 'rgba(252, 211, 77, 0.4)' : '#fcd34d';
+            ctx.strokeStyle = '#b45309';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(npc.position.x, npc.position.y, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+        } else if (objective.type === 'retrieve') {
+          if (objective.pickup.pickedUp) {
+            continue;
+          }
+          ctx.globalAlpha = 0.9;
+          ctx.fillStyle = '#a855f7';
+          ctx.strokeStyle = '#6b21a8';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          const { x, y } = objective.pickup.position;
+          ctx.moveTo(x, y - 6);
+          ctx.lineTo(x + 6, y);
+          ctx.lineTo(x, y + 6);
+          ctx.lineTo(x - 6, y);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  private _drawQuestMarkers(ctx: CanvasRenderingContext2D): void {
+    if (!this.questMarkers.length) {
+      return;
+    }
+    ctx.save();
+    ctx.font = '16px Inter';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const marker of this.questMarkers) {
+      if (!marker.visible) {
+        continue;
+      }
+      ctx.globalAlpha = 0.95;
+      const anchorY = marker.position.y - 22;
+      ctx.fillStyle = 'rgba(253, 224, 71, 0.9)';
+      ctx.beginPath();
+      ctx.arc(marker.position.x, anchorY, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.95)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#1f2937';
+      ctx.fillText(marker.icon, marker.position.x, anchorY);
+      ctx.beginPath();
+      ctx.moveTo(marker.position.x, anchorY + 11);
+      ctx.lineTo(marker.position.x, marker.position.y - 4);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   private _drawQuestGivers(ctx: CanvasRenderingContext2D): void {
@@ -1483,13 +1856,20 @@ export class Game {
       if (quest.state !== 'active') {
         continue;
       }
-      const distance = quest.position.distanceTo(this.knight.pos);
-      if (distance <= quest.radius) {
-        quest.progress = Math.min(quest.requiredTime, quest.progress + dt);
-      } else {
-        quest.progress = Math.max(0, quest.progress - dt * 0.5);
+      for (const objective of quest.objectives) {
+        switch (objective.type) {
+          case 'escort':
+            this._updateEscortObjective(objective, dt);
+            break;
+          case 'retrieve':
+            this._updateRetrieveObjective(objective);
+            break;
+          default:
+            break;
+        }
       }
-      if (quest.progress >= quest.requiredTime) {
+      this._refreshQuestProgress(quest);
+      if (quest.objectives.length && quest.objectives.every((objective) => objective.state === 'completed')) {
         this._completeQuest(quest);
       }
     }
@@ -1500,7 +1880,16 @@ export class Game {
       return;
     }
     quest.state = 'completed';
-    quest.progress = quest.requiredTime;
+    for (const objective of quest.objectives) {
+      objective.state = 'completed';
+      objective.progress = objective.required;
+      if (objective.markerId != null) {
+        this._removeQuestMarker(objective.markerId);
+        objective.markerId = null;
+      }
+    }
+    this._refreshQuestProgress(quest);
+    this._cleanupQuestObjectives(quest);
   }
 
   private _recordRescueProgress(amount: number): void {
