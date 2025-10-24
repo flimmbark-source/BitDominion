@@ -2805,7 +2805,7 @@ export class Game {
     ctx.fillStyle = HUD_COLOR;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    const statsText = `HP: ${this.knight.hp}  Evil: ${this.darkLord.evilEnergy}  Units: ${this.units.length}/${MAX_UNITS}  Seals: ${this.brokenSeals}/${SEAL_COUNT}  Supplies: ${this.supplies}`;
+    const statsText = `HP: ${this.knight.hp}  Evil: ${this.darkLord.evilEnergy}  Units: ${this.units.length}/${MAX_UNITS}  Seals: ${this.brokenSeals}/${SEAL_COUNT}  Gold: ${this.supplies}`;
     ctx.fillText(statsText, hpBarX, statsY);
 
     const helperText =
