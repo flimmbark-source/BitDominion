@@ -46,7 +46,7 @@ const BUILDING_DISPLAY: Record<BuildingType, { icon: string; name: string; descr
   }
 };
 
-type TutorialStepId = 'movement' | 'combat' | 'building' | 'noise' | 'quests' | 'healing';
+type TutorialStepId = 'movement' | 'combat' | 'building' | 'noise' | 'quests' | 'healing' | 'arsenal';
 
 interface TutorialStepDefinition {
   readonly title: string;
@@ -88,6 +88,7 @@ const TUTORIAL_STEPS: Record<TutorialStepId, TutorialStepDefinition> = {
     title: 'Catch Your Breath',
     body: 'Rest inside the Emberwatch inn during downtime to slowly restore Rowan’s health before the next assault.',
     icon: '💖'
+  },
   arsenal: {
     title: 'Check the Inventory',
     body: 'Press I during downtime to open your Inventory and review weapon evolutions.',
