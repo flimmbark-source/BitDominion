@@ -58,6 +58,7 @@ import {
   SUPPLIES_PASSIVE_AMOUNT,
   SUPPLIES_PASSIVE_INTERVAL,
   SUPPLIES_SEAL_BONUS,
+  UNIT_APPEARANCE,
   UNIT_MAX_HALF_SIZE,
   UNIT_STATS,
   UnitType,
@@ -216,6 +217,16 @@ interface DamageNumber {
   duration: number;
   color: string;
   emphasis: boolean;
+}
+
+interface DeathParticle {
+  id: number;
+  position: Vector2;
+  velocity: Vector2;
+  radius: number;
+  age: number;
+  lifetime: number;
+  color: string;
 }
 
 type GamePhase = 'downtime' | 'wave';
@@ -495,8 +506,10 @@ export class Game {
   private smokeFieldIdCounter = 1;
   private hitFlashes: HitFlash[] = [];
   private damageNumbers: DamageNumber[] = [];
+  private deathParticles: DeathParticle[] = [];
   private hitFlashIdCounter = 1;
   private damageNumberIdCounter = 1;
+  private deathParticleIdCounter = 1;
   private unitLookup: Map<number, DarkUnit> = new Map();
   private unitIdCounter = 1;
   private totalKills = 0;
@@ -575,8 +588,10 @@ export class Game {
     this.smokeFieldIdCounter = 1;
     this.hitFlashes = [];
     this.damageNumbers = [];
+    this.deathParticles = [];
     this.hitFlashIdCounter = 1;
     this.damageNumberIdCounter = 1;
+    this.deathParticleIdCounter = 1;
     this.unitLookup.clear();
     this.unitIdCounter = 1;
     this.totalKills = 0;
@@ -1212,6 +1227,7 @@ export class Game {
     this._syncWorldObstacles();
     if (this.state !== 'running') {
       this._updateHitFlashes(dt);
+      this._updateDeathParticles(dt);
       this._updateDamageNumbers(dt);
       this._updateShield(dt);
       this.world.update(dt, {
@@ -1248,6 +1264,7 @@ export class Game {
     this._updateKnightProjectiles(dt);
     this._updateSmokeFields(dt);
     this._updateHitFlashes(dt);
+    this._updateDeathParticles(dt);
     this._updateDamageNumbers(dt);
 
     this.world.update(dt, {
@@ -1335,6 +1352,7 @@ export class Game {
 
     this.knight.draw(ctx);
     this.knight.drawSwing(ctx);
+    this._drawDeathParticles(ctx);
     this._drawHitFlashes(ctx);
     this._drawDamageNumbers(ctx);
 
@@ -2343,7 +2361,8 @@ export class Game {
     return new Vector2(vector.x * cos - vector.y * sin, vector.x * sin + vector.y * cos);
   }
 
-  private _onUnitKilled(_unit: DarkUnit): void {
+  private _onUnitKilled(unit: DarkUnit): void {
+    this._spawnDeathBurst(unit);
     this.totalKills += 1;
     for (const state of this.weaponStates.values()) {
       state.kills += 1 + this.killMasteryBonus;
@@ -3249,8 +3268,16 @@ export class Game {
 
       const hitUnit = this._findProjectileHit(projectile);
       if (hitUnit) {
+        const wasAlive = hitUnit.alive;
+        const preHp = hitUnit.hp;
         hitUnit.takeDamage(projectile.damage);
-        if (!hitUnit.alive) {
+        const damageDealt = Math.max(0, preHp - hitUnit.hp);
+        if (damageDealt > 0) {
+          this._spawnHitFlash(hitUnit.pos, hitUnit.getCollisionRadius(), { strong: !hitUnit.alive });
+          this._spawnDamageNumber(hitUnit.pos, damageDealt, { emphasis: !hitUnit.alive });
+        }
+        if (wasAlive && !hitUnit.alive) {
+          this._onUnitKilled(hitUnit);
           this.units = this.units.filter((unit) => unit.alive);
         }
         continue;
@@ -3603,6 +3630,20 @@ export class Game {
     this.hitFlashes = this.hitFlashes.filter((flash) => flash.age < flash.duration);
   }
 
+  private _updateDeathParticles(dt: number): void {
+    if (!this.deathParticles.length) {
+      return;
+    }
+    for (const particle of this.deathParticles) {
+      particle.age += dt;
+      particle.position.x += particle.velocity.x * dt;
+      particle.position.y += particle.velocity.y * dt;
+      particle.velocity.x *= 0.88;
+      particle.velocity.y = particle.velocity.y * 0.88 + 120 * dt;
+    }
+    this.deathParticles = this.deathParticles.filter((particle) => particle.age < particle.lifetime);
+  }
+
   private _updateDamageNumbers(dt: number): void {
     if (!this.damageNumbers.length) {
       return;
@@ -3628,6 +3669,30 @@ export class Game {
       strong
     };
     this.hitFlashes.push(flash);
+  }
+
+  private _spawnDeathBurst(unit: DarkUnit): void {
+    const appearance = UNIT_APPEARANCE[unit.type];
+    const colors = appearance
+      ? [appearance.accent, appearance.detail, '#FFECC6']
+      : ['#FFECC6', '#FFD4A1'];
+    const baseRadius = Math.max(10, unit.getCollisionRadius() * 1.8);
+    const count = 9 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 60 + Math.random() * 120;
+      const velocity = new Vector2(Math.cos(angle) * speed, Math.sin(angle) * speed - 30);
+      const particle: DeathParticle = {
+        id: this.deathParticleIdCounter++,
+        position: unit.pos.clone(),
+        velocity,
+        radius: baseRadius * (0.25 + Math.random() * 0.55),
+        age: 0,
+        lifetime: 0.6 + Math.random() * 0.35,
+        color: colors[Math.floor(Math.random() * colors.length)]
+      };
+      this.deathParticles.push(particle);
+    }
   }
 
   private _spawnDamageNumber(
@@ -3687,6 +3752,39 @@ export class Game {
     ctx.restore();
   }
 
+  private _drawDeathParticles(ctx: CanvasRenderingContext2D): void {
+    if (!this.deathParticles.length) {
+      return;
+    }
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const particle of this.deathParticles) {
+      const progress = particle.lifetime > 0 ? particle.age / particle.lifetime : 1;
+      const clamped = Math.max(0, Math.min(1, progress));
+      const alpha = (1 - clamped) * 0.85;
+      if (alpha <= 0) {
+        continue;
+      }
+      const radius = particle.radius * (0.9 + 0.4 * (1 - clamped));
+      const gradient = ctx.createRadialGradient(
+        particle.position.x,
+        particle.position.y,
+        Math.max(1, radius * 0.2),
+        particle.position.x,
+        particle.position.y,
+        radius
+      );
+      gradient.addColorStop(0, `rgba(255, 255, 255, ${(alpha * 0.9).toFixed(3)})`);
+      gradient.addColorStop(0.5, this._withAlpha(particle.color, alpha * 0.9));
+      gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(particle.position.x, particle.position.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   private _drawDamageNumbers(ctx: CanvasRenderingContext2D): void {
     if (!this.damageNumbers.length) {
       return;
@@ -3715,6 +3813,24 @@ export class Game {
       ctx.restore();
     }
     ctx.restore();
+  }
+
+  private _withAlpha(color: string, alpha: number): string {
+    const normalized = Math.max(0, Math.min(1, alpha));
+    if (/^#([0-9a-f]{3}){1,2}$/i.test(color)) {
+      let hex = color.slice(1);
+      if (hex.length === 3) {
+        hex = hex
+          .split('')
+          .map((char) => char + char)
+          .join('');
+      }
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${normalized.toFixed(3)})`;
+    }
+    return `rgba(255, 244, 220, ${normalized.toFixed(3)})`;
   }
 
   private _formatDamage(amount: number): string {
@@ -3775,14 +3891,22 @@ export class Game {
       const dx = Math.abs(unit.pos.x - building.position.x);
       const dy = Math.abs(unit.pos.y - building.position.y);
       if (dx <= halfWidth + radius && dy <= halfHeight + radius) {
-        if (unit.type === 'scout') {
-          unit.takeDamage(unit.hp);
-        } else {
-          unit.takeDamage(1);
-          if (unit.type === 'tank') {
-            unit.applySlow(SPIKE_TRAP_SLOW_FACTOR, SPIKE_TRAP_SLOW_DURATION);
-          }
+        const wasAlive = unit.alive;
+        const preHp = unit.hp;
+        const damage = unit.type === 'scout' ? unit.hp : 1;
+        unit.takeDamage(damage);
+        if (unit.type === 'tank' && unit.alive) {
+          unit.applySlow(SPIKE_TRAP_SLOW_FACTOR, SPIKE_TRAP_SLOW_DURATION);
         }
+        const damageDealt = Math.max(0, preHp - unit.hp);
+        if (damageDealt > 0) {
+          this._spawnHitFlash(unit.pos, unit.getCollisionRadius(), { strong: !unit.alive });
+          this._spawnDamageNumber(unit.pos, damageDealt, { emphasis: !unit.alive });
+        }
+        if (wasAlive && !unit.alive) {
+          this._onUnitKilled(unit);
+        }
+        this.units = this.units.filter((candidate) => candidate.alive);
         building.data.used = true;
         return true;
       }
