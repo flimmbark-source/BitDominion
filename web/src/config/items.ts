@@ -8,6 +8,7 @@ export interface ItemDefinition {
   readonly id: ItemId;
   readonly name: string;
   readonly description: string;
+  readonly role: string;
   readonly cost: number;
   readonly icon: string;
   readonly unique?: boolean;
@@ -17,81 +18,138 @@ export interface ItemDefinition {
     readonly count: number;
     readonly label: string;
   };
+  readonly evolution?: {
+    readonly name: string;
+    readonly description: string;
+  };
+  readonly buildPaths: readonly string[];
 }
 
 export const ITEM_DEFINITIONS: Record<ItemId, ItemDefinition> = {
   steelSword: {
     id: 'steelSword',
     name: 'Knightblade',
-    description: 'Tempered steel blade that enables sweeping melee arcs and prepares the knight for close combat mastery.',
+    description:
+      'Tempered steel blade that keeps the knight lethal up close with wide melee sweeps and reliable crowd control.',
+    role: 'Melee core — anchors bruiser builds and rewards staying in the fray.',
     cost: 0,
     icon: '🗡️',
     unique: true,
-    category: 'weapon'
+    category: 'weapon',
+    buildPaths: [
+      'Pair with Ember Torch or barricades to create a burning front line.',
+      'Stack Hunter Jerky for heavy-hitting melee crits.'
+    ]
   },
   scoutBoots: {
     id: 'scoutBoots',
     name: 'Scout Boots',
     description:
-      'Supple leather boots that increase stride speed by 15% and convert each completed quest into bonus weapon mastery.',
+      'Supple leather boots that grant +15% stride speed and convert completed rescues into bonus evolution progress.',
+    role: 'Mobility support — rewards questing and map control playstyles.',
     cost: 55,
     icon: '🥾',
     unique: true,
-    category: 'support'
+    category: 'support',
+    buildPaths: [
+      'Rush ranged items like Throwing Knives or Crossbow Charm to kite efficiently.',
+      'Chain with Smoke Bomb Satchel for escape-heavy trap builds.'
+    ]
   },
   hunterJerky: {
     id: 'hunterJerky',
     name: 'Hunter Jerky',
     description:
-      'Smoked stag strips that harden resolve. Grants +20% weapon damage and adds a kill streak bonus toward evolutions.',
+      'Smoked stag strips fortify resolve with +20% weapon damage and increased kill mastery gains.',
+    role: 'Damage support — accelerates offensive evolutions.',
     cost: 60,
     icon: '🥩',
     unique: true,
-    category: 'support'
+    category: 'support',
+    buildPaths: [
+      'Combine with Throwing Knives for rapid Poison Dagger unlocks.',
+      'Feed Ember Torch or Knightblade with extra burn damage.'
+    ]
   },
   throwingKnife: {
     id: 'throwingKnife',
     name: 'Throwing Knife',
     description:
-      'Automatic flurry of forward daggers. Evolves into Poison Daggers after 25 kills, applying venom over time.',
+      'Launches an automatic flurry of daggers toward the nearest foe, shredding front lines from range.',
+    role: 'Ranged pressure — excels at thinning waves before they reach you.',
     cost: 0,
     icon: '🔪',
     unique: true,
     category: 'weapon',
-    evolveRequirement: { type: 'kills', count: 25, label: 'Knife kills' }
+    evolveRequirement: { type: 'kills', count: 25, label: 'Knife kills' },
+    evolution: {
+      name: 'Poison Daggers',
+      description: 'Adds a third dagger, inflicts venom DoT, and increases spread for lane coverage.'
+    },
+    buildPaths: [
+      'Pair with mobility from Scout Boots to kite while blades clean up.',
+      'Add Hunter Jerky to accelerate kill requirements and boost damage.'
+    ]
   },
   torch: {
     id: 'torch',
     name: 'Ember Torch',
     description:
-      'A trio of flames orbit the hero, scorching nearby foes. Complete 3 rescues to upgrade into the Inferno Ring.',
+      'Three flames orbit the knight, burning anything that ventures into melee range.',
+    role: 'Zone control — locks down melee clusters around the hero.',
     cost: 35,
     icon: '🔥',
     unique: true,
     category: 'weapon',
-    evolveRequirement: { type: 'rescues', count: 3, label: 'Village rescues' }
+    evolveRequirement: { type: 'rescues', count: 3, label: 'Village rescues' },
+    evolution: {
+      name: 'Inferno Ring',
+      description: 'Expands the orbit, increases burn damage, and brands enemies with lingering fire.'
+    },
+    buildPaths: [
+      'Layer with Knightblade for an aggressive melee bruiser setup.',
+      'Guard choke points with traps while flames mop up stragglers.'
+    ]
   },
   crossbowCharm: {
     id: 'crossbowCharm',
     name: 'Crossbow Charm',
     description:
-      'Summons an ethereal arbalest that shoots the nearest enemy. Score 35 kills to craft the Repeating Arbalest.',
+      'Summons an ethereal arbalest that stalks the nearest target with precise bolts.',
+    role: 'Precision ranged — excels at sniping elite threats before they reach your lines.',
     cost: 70,
     icon: '🏹',
     unique: true,
     category: 'weapon',
-    evolveRequirement: { type: 'kills', count: 35, label: 'Charm kills' }
+    evolveRequirement: { type: 'kills', count: 35, label: 'Charm kills' },
+    evolution: {
+      name: 'Repeating Arbalest',
+      description: 'Fires twin piercing bolts and shortens the reload for relentless boss pressure.'
+    },
+    buildPaths: [
+      'Anchor a pure ranged kit with Throwing Knives for crossfire coverage.',
+      'Combine with Smoke Bomb Satchel to slow enemies into its firing lane.'
+    ]
   },
   smokeBombSatchel: {
     id: 'smokeBombSatchel',
     name: 'Smoke Bomb Satchel',
     description:
-      'Periodic smoke clouds slow pursuers. Complete 4 rescues to weave cloaking fields around the hero.',
+      'Deploys periodic smoke clouds that slow pursuers and break line of sight.',
+    role: 'Control & traps — manipulates patrols and protects objective play.',
     cost: 45,
     icon: '💨',
     unique: true,
     category: 'weapon',
-    evolveRequirement: { type: 'rescues', count: 4, label: 'Rescued villagers' }
+    evolveRequirement: { type: 'rescues', count: 4, label: 'Rescued villagers' },
+    evolution: {
+      name: 'Cloak Field Weave',
+      description: 'Creates larger, longer-lasting fields that grant brief invisibility and stronger slows.'
+    },
+    buildPaths: [
+      'Layer traps with Spike structures for a denial-heavy defense.',
+      'Pair with ranged weapons so slowed enemies stay inside damage zones.'
+    ]
   }
 };
 
