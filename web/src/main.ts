@@ -9,7 +9,14 @@ import {
   DOWNTIME_DURATION
 } from './config/constants';
 import { getBuildingDefinition } from './entities/building';
-import { ITEM_DEFINITIONS, ITEM_ORDER, ItemId } from './config/items';
+import { ITEM_DEFINITIONS, ITEM_ORDER, ItemId, WeaponItemId } from './config/items';
+import {
+  META_WEAPON_TRACKS,
+  type MetaUpgradeId,
+  getMetaUpgradesForWeapon,
+  getMetaUpgradeDefinition,
+  getWeaponDefinitionForMeta
+} from './config/metaProgression';
 
 const BUILDING_DISPLAY: Record<BuildingType, { icon: string; name: string; description: string }> = {
   watchtower: {
@@ -81,6 +88,11 @@ const TUTORIAL_STEPS: Record<TutorialStepId, TutorialStepDefinition> = {
     title: 'Catch Your Breath',
     body: 'Rest inside the Emberwatch inn during downtime to slowly restore Rowan’s health before the next assault.',
     icon: '💖'
+  arsenal: {
+    title: 'Check the Inventory',
+    body: 'Press I during downtime to open your Inventory and review weapon evolutions.',
+    icon: '⚔️',
+    keys: ['I']
   }
 };
 
@@ -367,6 +379,63 @@ appRootElement.innerHTML = `
           <ul class="quest-log-list" id="questLogList"></ul>
         </div>
       </div>
+      <div class="inventory-overlay hidden" id="inventoryOverlay" aria-hidden="true">
+        <div class="inventory-modal" role="dialog" aria-modal="true" aria-labelledby="inventoryOverlayTitle">
+          <div class="inventory-modal-header">
+            <div>
+              <h2 class="inventory-modal-title" id="inventoryOverlayTitle">Hero Inventory</h2>
+              <p class="inventory-modal-subtitle">Inspect your loadout and monitor evolution progress.</p>
+            </div>
+            <button class="inventory-modal-close" id="inventoryOverlayClose" type="button" aria-label="Close inventory">×</button>
+          </div>
+          <div class="inventory-modal-body">
+            <div class="inventory-modal-list" id="inventoryOverlayList" role="list"></div>
+            <aside class="inventory-preview hidden" id="inventoryOverlayPreview">
+              <div class="inventory-preview-header">
+                <div class="inventory-preview-icon" id="inventoryPreviewIcon" aria-hidden="true">🗡️</div>
+                <div class="inventory-preview-titles">
+                  <h3 class="inventory-preview-title" id="inventoryPreviewTitle">Loadout Item</h3>
+                  <div class="inventory-preview-progress" id="inventoryPreviewProgress"></div>
+                </div>
+              </div>
+              <p class="inventory-preview-description" id="inventoryPreviewDescription"></p>
+              <div class="inventory-preview-evolution hidden" id="inventoryPreviewEvolution">
+                <h4 class="inventory-preview-evolution-title">Evolution Preview</h4>
+                <div class="inventory-preview-evolution-name" id="inventoryPreviewEvolutionName"></div>
+                <p class="inventory-preview-evolution-description" id="inventoryPreviewEvolutionDescription"></p>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+      <div class="meta-overlay hidden" id="metaProgressionOverlay" aria-hidden="true">
+        <div class="meta-panel" role="dialog" aria-modal="true" aria-labelledby="metaOverlayTitle">
+          <div class="meta-header">
+            <div class="meta-header-titles">
+              <h2 class="meta-overlay-title" id="metaOverlayTitle">Relic Forge</h2>
+              <p class="meta-overlay-subtitle">Spend Relic Shards to unlock weapon upgrades for future runs.</p>
+            </div>
+            <div class="meta-header-actions">
+              <div class="meta-shard-counter">Relic Shards: <span id="metaShardCount">0</span></div>
+              <button class="meta-overlay-close" id="metaOverlayClose" type="button" aria-label="Close relic forge">×</button>
+            </div>
+          </div>
+          <div class="meta-body">
+            <div class="meta-weapon-grid" id="metaWeaponList" role="list"></div>
+            <div class="meta-weapon-detail hidden" id="metaWeaponDetail">
+              <button class="meta-back-button" id="metaWeaponBack" type="button">← Back to Arsenal</button>
+              <div class="meta-weapon-detail-header">
+                <div class="meta-weapon-detail-icon" id="metaWeaponDetailIcon" aria-hidden="true">🔪</div>
+                <div class="meta-weapon-detail-titles">
+                  <h3 class="meta-weapon-detail-title" id="metaWeaponDetailTitle">Weapon</h3>
+                  <p class="meta-weapon-detail-overview" id="metaWeaponDetailOverview"></p>
+                </div>
+              </div>
+              <div class="meta-upgrade-grid" id="metaUpgradeList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="item-detail-overlay hidden" id="itemDetailOverlay" aria-hidden="true">
         <div class="item-detail-panel" role="dialog" aria-modal="true" aria-labelledby="itemDetailTitle">
           <button class="item-detail-close" id="itemDetailClose" type="button" aria-label="Close item details">×</button>
@@ -519,7 +588,6 @@ focusCameraOnKnight({ zoom: INITIAL_CAMERA_ZOOM });
 
 const tooltipPanel = requireElement<HTMLDivElement>('#tooltipPanel');
 const inventoryPanel = requireElement<HTMLDivElement>('#inventoryPanel');
-inventoryPanel.style.setProperty('--inventory-columns', `${INVENTORY_SLOTS}`);
 const heroGoldText = requireElement<HTMLSpanElement>('#heroGoldText');
 const heroGoldGain = requireElement<HTMLSpanElement>('#heroGoldGain');
 const heroShardText = requireElement<HTMLSpanElement>('#heroShardText');
@@ -543,6 +611,29 @@ const gameOverSubtext = requireElement<HTMLParagraphElement>('#gameOverSubtext')
 const questLogOverlay = requireElement<HTMLDivElement>('#questLogOverlay');
 const questLogList = requireElement<HTMLUListElement>('#questLogList');
 const questLogCloseButton = requireElement<HTMLButtonElement>('#questLogClose');
+const inventoryOverlay = requireElement<HTMLDivElement>('#inventoryOverlay');
+const inventoryOverlayClose = requireElement<HTMLButtonElement>('#inventoryOverlayClose');
+const inventoryOverlayList = requireElement<HTMLDivElement>('#inventoryOverlayList');
+const inventoryOverlayPreview = requireElement<HTMLDivElement>('#inventoryOverlayPreview');
+const inventoryPreviewIcon = requireElement<HTMLDivElement>('#inventoryPreviewIcon');
+const inventoryPreviewTitle = requireElement<HTMLHeadingElement>('#inventoryPreviewTitle');
+const inventoryPreviewDescription = requireElement<HTMLParagraphElement>('#inventoryPreviewDescription');
+const inventoryPreviewProgress = requireElement<HTMLDivElement>('#inventoryPreviewProgress');
+const inventoryPreviewEvolution = requireElement<HTMLDivElement>('#inventoryPreviewEvolution');
+const inventoryPreviewEvolutionName = requireElement<HTMLDivElement>('#inventoryPreviewEvolutionName');
+const inventoryPreviewEvolutionDescription = requireElement<HTMLParagraphElement>(
+  '#inventoryPreviewEvolutionDescription'
+);
+const metaProgressionOverlay = requireElement<HTMLDivElement>('#metaProgressionOverlay');
+const metaOverlayClose = requireElement<HTMLButtonElement>('#metaOverlayClose');
+const metaShardCount = requireElement<HTMLSpanElement>('#metaShardCount');
+const metaWeaponList = requireElement<HTMLDivElement>('#metaWeaponList');
+const metaWeaponDetail = requireElement<HTMLDivElement>('#metaWeaponDetail');
+const metaWeaponBack = requireElement<HTMLButtonElement>('#metaWeaponBack');
+const metaWeaponDetailIcon = requireElement<HTMLDivElement>('#metaWeaponDetailIcon');
+const metaWeaponDetailTitle = requireElement<HTMLHeadingElement>('#metaWeaponDetailTitle');
+const metaWeaponDetailOverview = requireElement<HTMLParagraphElement>('#metaWeaponDetailOverview');
+const metaUpgradeList = requireElement<HTMLDivElement>('#metaUpgradeList');
 const itemDetailOverlay = requireElement<HTMLDivElement>('#itemDetailOverlay');
 const itemDetailCloseButton = requireElement<HTMLButtonElement>('#itemDetailClose');
 const itemDetailIcon = requireElement<HTMLDivElement>('#itemDetailIcon');
@@ -870,51 +961,477 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+function updateInventoryPreview(entry: LoadoutEntry): void {
+  inventoryOverlayPreview.classList.remove('hidden');
+  inventoryOverlayPreview.setAttribute('aria-hidden', 'false');
+  inventoryPreviewIcon.textContent = entry.icon;
+  inventoryPreviewTitle.textContent = entry.name;
+  inventoryPreviewDescription.textContent = entry.description;
+  let progressText: string;
+  if (entry.category !== 'weapon') {
+    progressText = 'Passive effect active.';
+  } else if (entry.evolved) {
+    progressText = 'Evolved form active.';
+  } else if (entry.progress) {
+    progressText = entry.progress.ready
+      ? 'Ready to evolve! Visit the workshop or fulfill the trigger to ascend this weapon.'
+      : `${entry.progress.current}/${entry.progress.required} ${entry.progress.label} to evolve.`;
+  } else {
+    progressText = 'Awakening — continue fighting to unlock evolution clues.';
+  }
+  inventoryPreviewProgress.textContent = progressText;
+  inventoryPreviewProgress.classList.toggle('ready', !!entry.progress?.ready && !entry.evolved);
+  const definition = ITEM_DEFINITIONS[entry.id];
+  if (definition?.evolution) {
+    inventoryPreviewEvolution.classList.remove('hidden');
+    inventoryPreviewEvolution.setAttribute('aria-hidden', 'false');
+    inventoryPreviewEvolutionName.textContent = definition.evolution.name;
+    inventoryPreviewEvolutionDescription.textContent = definition.evolution.description;
+  } else {
+    inventoryPreviewEvolution.classList.add('hidden');
+    inventoryPreviewEvolution.setAttribute('aria-hidden', 'true');
+    inventoryPreviewEvolutionName.textContent = '';
+    inventoryPreviewEvolutionDescription.textContent = '';
+  }
+}
+
+function setActiveInventoryPreview(itemId: ItemId, entries?: LoadoutEntry[]): void {
+  const loadout = entries ?? game.getHeroLoadout();
+  const entry = loadout.find((candidate) => candidate.id === itemId);
+  if (!entry) {
+    return;
+  }
+  activeInventoryPreviewId = itemId;
+  const cards = inventoryOverlayList.querySelectorAll<HTMLButtonElement>('.inventory-card');
+  cards.forEach((card) => {
+    card.classList.toggle('active', card.dataset.itemId === itemId);
+  });
+  updateInventoryPreview(entry);
+}
+
+function renderInventoryOverlay(): void {
+  const loadout = game.getHeroLoadout();
+  const signature = loadout
+    .map((entry) => {
+      const progress = entry.progress
+        ? `${entry.progress.current}-${entry.progress.ready ? 'ready' : 'waiting'}`
+        : 'none';
+      return `${entry.id}:${entry.evolved ? 'evolved' : 'base'}:${progress}`;
+    })
+    .join('|');
+
+  if (loadout.length > 0 && isInventoryOverlayOpen && signature === lastInventoryOverlaySignature) {
+    if (activeInventoryPreviewId && loadout.some((entry) => entry.id === activeInventoryPreviewId)) {
+      setActiveInventoryPreview(activeInventoryPreviewId, loadout);
+    }
+    return;
+  }
+  lastInventoryOverlaySignature = signature;
+  inventoryOverlayList.innerHTML = '';
+  if (!loadout.length) {
+    const empty = document.createElement('p');
+    empty.className = 'inventory-modal-empty';
+    empty.textContent = 'You have not collected any gear yet.';
+    inventoryOverlayList.appendChild(empty);
+    inventoryOverlayPreview.classList.add('hidden');
+    inventoryOverlayPreview.setAttribute('aria-hidden', 'true');
+    activeInventoryPreviewId = null;
+    return;
+  }
+
+  for (const entry of loadout) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'inventory-card';
+    card.dataset.itemId = entry.id;
+    const icon = document.createElement('span');
+    icon.className = 'inventory-card-icon';
+    icon.textContent = entry.icon;
+    icon.setAttribute('aria-hidden', 'true');
+    card.appendChild(icon);
+
+    const content = document.createElement('span');
+    content.className = 'inventory-card-content';
+    card.appendChild(content);
+
+    const name = document.createElement('span');
+    name.className = 'inventory-card-name';
+    name.textContent = entry.name;
+    content.appendChild(name);
+
+    const status = document.createElement('span');
+    status.className = 'inventory-card-status';
+    if (entry.category === 'weapon' && entry.progress?.ready) {
+      status.classList.add('ready');
+      status.textContent = 'Ready to evolve!';
+    } else if (entry.category === 'weapon' && entry.progress) {
+      status.textContent = `${entry.progress.current}/${entry.progress.required} ${entry.progress.label} to evolve`;
+    } else if (entry.evolved) {
+      status.textContent = 'Evolved form active';
+    } else if (entry.category !== 'weapon') {
+      status.textContent = 'Passive effect active';
+    } else {
+      status.textContent = 'Awakening';
+    }
+    content.appendChild(status);
+
+    const progress = getInventoryProgressText(entry);
+    card.title = progress.long;
+    card.addEventListener('click', () => setActiveInventoryPreview(entry.id));
+    inventoryOverlayList.appendChild(card);
+  }
+
+  if (!activeInventoryPreviewId || !loadout.some((entry) => entry.id === activeInventoryPreviewId)) {
+    activeInventoryPreviewId = loadout[0]?.id ?? null;
+  }
+  if (activeInventoryPreviewId) {
+    setActiveInventoryPreview(activeInventoryPreviewId, loadout);
+  }
+}
+
+function openInventoryOverlay(): void {
+  if (isInventoryOverlayOpen) {
+    renderInventoryOverlay();
+    return;
+  }
+  isInventoryOverlayOpen = true;
+  setItemShopOpen(false);
+  closeMetaOverlay();
+  inventoryOverlay.classList.remove('hidden');
+  inventoryOverlay.setAttribute('aria-hidden', 'false');
+  lastInventoryOverlaySignature = '';
+  renderInventoryOverlay();
+  inventoryOverlayClose.focus();
+}
+
+function closeInventoryOverlay(): void {
+  if (!isInventoryOverlayOpen) {
+    return;
+  }
+  isInventoryOverlayOpen = false;
+  inventoryOverlay.classList.add('hidden');
+  inventoryOverlay.setAttribute('aria-hidden', 'true');
+  inventoryOverlayPreview.setAttribute('aria-hidden', 'true');
+  lastInventoryOverlaySignature = '';
+}
+
+function updateMetaShardDisplay(): void {
+  metaShardCount.textContent = `${game.getRelicShards()}`;
+}
+
+function updateMetaWeaponCard(weaponId: WeaponItemId): void {
+  const card = metaWeaponButtons.get(weaponId);
+  if (!card) {
+    return;
+  }
+  const track = META_WEAPON_TRACKS.find((candidate) => candidate.weaponId === weaponId);
+  if (!track) {
+    return;
+  }
+  const total = track.upgrades.length;
+  const unlockedCount = track.upgrades.filter((upgradeId) => game.isMetaUpgradeUnlocked(upgradeId)).length;
+  const status = card.querySelector<HTMLSpanElement>('.meta-weapon-card-status');
+  if (status) {
+    status.textContent = `${unlockedCount}/${total} upgrades unlocked`;
+  }
+  card.classList.toggle('complete', unlockedCount === total && total > 0);
+}
+
+function renderMetaWeaponGrid(): void {
+  metaWeaponButtons.clear();
+  metaWeaponList.innerHTML = '';
+  for (const track of META_WEAPON_TRACKS) {
+    const definition = getWeaponDefinitionForMeta(track.weaponId);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'meta-weapon-card';
+    button.dataset.weaponId = track.weaponId;
+
+    const icon = document.createElement('span');
+    icon.className = 'meta-weapon-card-icon';
+    icon.textContent = definition.icon;
+    icon.setAttribute('aria-hidden', 'true');
+    button.appendChild(icon);
+
+    const content = document.createElement('span');
+    content.className = 'meta-weapon-card-text';
+    button.appendChild(content);
+
+    const name = document.createElement('span');
+    name.className = 'meta-weapon-card-name';
+    name.textContent = definition.name;
+    content.appendChild(name);
+
+    const role = document.createElement('span');
+    role.className = 'meta-weapon-card-role';
+    role.textContent = definition.role;
+    content.appendChild(role);
+
+    const status = document.createElement('span');
+    status.className = 'meta-weapon-card-status';
+    content.appendChild(status);
+
+    button.addEventListener('click', () => showMetaWeaponDetail(track.weaponId));
+    metaWeaponButtons.set(track.weaponId, button);
+    metaWeaponList.appendChild(button);
+    updateMetaWeaponCard(track.weaponId);
+  }
+  metaWeaponList.classList.remove('hidden');
+  metaWeaponDetail.classList.add('hidden');
+  activeMetaWeaponId = null;
+}
+
+function refreshMetaUpgradeButtons(): void {
+  const shards = game.getRelicShards();
+  for (const [id, button] of metaUpgradeButtons.entries()) {
+    const definition = getMetaUpgradeDefinition(id);
+    const unlocked = game.isMetaUpgradeUnlocked(id);
+    const prereqsMet = definition.prerequisites.every((prereq) => game.isMetaUpgradeUnlocked(prereq));
+    const canAfford = shards >= definition.cost;
+    const card = button.closest<HTMLDivElement>('.meta-upgrade-card');
+    if (card) {
+      card.classList.toggle('meta-upgrade-card--unlocked', unlocked);
+      card.classList.toggle('meta-upgrade-card--locked', !unlocked);
+    }
+    if (unlocked) {
+      button.disabled = true;
+      button.textContent = 'Unlocked';
+    } else if (!prereqsMet) {
+      button.disabled = true;
+      button.textContent = 'Prerequisite required';
+    } else {
+      button.disabled = !canAfford;
+      button.textContent = `Unlock (${definition.cost} shards)`;
+    }
+    button.classList.toggle('affordable', !unlocked && prereqsMet && canAfford);
+  }
+}
+
+function renderMetaUpgrades(weaponId: WeaponItemId): void {
+  metaUpgradeButtons.clear();
+  metaUpgradeList.innerHTML = '';
+  const upgrades = getMetaUpgradesForWeapon(weaponId);
+  if (!upgrades.length) {
+    const empty = document.createElement('p');
+    empty.className = 'meta-upgrade-empty';
+    empty.textContent = 'No relic upgrades available for this weapon yet.';
+    metaUpgradeList.appendChild(empty);
+    return;
+  }
+
+  for (const upgrade of upgrades) {
+    const card = document.createElement('div');
+    card.className = 'meta-upgrade-card';
+    card.dataset.tier = `${upgrade.tier}`;
+
+    const tier = document.createElement('div');
+    tier.className = 'meta-upgrade-tier';
+    tier.textContent = `Tier ${upgrade.tier}`;
+    card.appendChild(tier);
+
+    const name = document.createElement('div');
+    name.className = 'meta-upgrade-name';
+    name.textContent = upgrade.name;
+    card.appendChild(name);
+
+    const description = document.createElement('p');
+    description.className = 'meta-upgrade-description';
+    description.textContent = upgrade.description;
+    card.appendChild(description);
+
+    const prereq = document.createElement('p');
+    prereq.className = 'meta-upgrade-prereq';
+    if (upgrade.prerequisites.length) {
+      const prerequisiteNames = upgrade.prerequisites
+        .map((id) => getMetaUpgradeDefinition(id).name)
+        .join(', ');
+      prereq.textContent = `Requires: ${prerequisiteNames}`;
+    } else {
+      prereq.textContent = 'Requires: None';
+    }
+    card.appendChild(prereq);
+
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'meta-upgrade-action';
+    action.dataset.upgradeId = upgrade.id;
+    action.addEventListener('click', () => {
+      if (game.unlockMetaUpgrade(upgrade.id)) {
+        updateHud();
+        renderMetaUpgrades(weaponId);
+        updateMetaShardDisplay();
+        updateMetaWeaponCard(weaponId);
+      }
+    });
+    card.appendChild(action);
+    metaUpgradeButtons.set(upgrade.id, action);
+    metaUpgradeList.appendChild(card);
+  }
+  refreshMetaUpgradeButtons();
+}
+
+function showMetaWeaponDetail(weaponId: WeaponItemId): void {
+  activeMetaWeaponId = weaponId;
+  const definition = getWeaponDefinitionForMeta(weaponId);
+  const track = META_WEAPON_TRACKS.find((candidate) => candidate.weaponId === weaponId);
+  metaWeaponDetailIcon.textContent = definition.icon;
+  metaWeaponDetailTitle.textContent = definition.name;
+  metaWeaponDetailOverview.textContent = track?.overview ?? definition.role;
+  metaWeaponList.classList.add('hidden');
+  metaWeaponDetail.classList.remove('hidden');
+  metaWeaponButtons.forEach((button, id) => {
+    button.classList.toggle('active', id === weaponId);
+  });
+  renderMetaUpgrades(weaponId);
+  metaWeaponBack.focus();
+}
+
+function openMetaOverlay(): void {
+  if (isMetaOverlayOpen) {
+    updateMetaShardDisplay();
+    for (const track of META_WEAPON_TRACKS) {
+      updateMetaWeaponCard(track.weaponId);
+    }
+    if (activeMetaWeaponId) {
+      renderMetaUpgrades(activeMetaWeaponId);
+    } else {
+      refreshMetaUpgradeButtons();
+    }
+    return;
+  }
+  isMetaOverlayOpen = true;
+  closeInventoryOverlay();
+  setItemShopOpen(false);
+  metaProgressionOverlay.classList.remove('hidden');
+  metaProgressionOverlay.setAttribute('aria-hidden', 'false');
+  renderMetaWeaponGrid();
+  updateMetaShardDisplay();
+  metaOverlayClose.focus();
+}
+
+function closeMetaOverlay(): void {
+  if (!isMetaOverlayOpen) {
+    return;
+  }
+  isMetaOverlayOpen = false;
+  metaProgressionOverlay.classList.add('hidden');
+  metaProgressionOverlay.setAttribute('aria-hidden', 'true');
+  metaWeaponList.classList.remove('hidden');
+  metaWeaponDetail.classList.add('hidden');
+  activeMetaWeaponId = null;
+  metaUpgradeButtons.clear();
+  metaUpgradeList.innerHTML = '';
+  metaWeaponButtons.forEach((button) => button.classList.remove('active'));
+}
+
 function updateInventory() {
   const loadout = game.getHeroLoadout();
+  const seenIds = new Set<ItemId>();
   for (let i = 0; i < inventorySlots.length; i++) {
     const slot = inventorySlots[i];
     const entry = loadout[i];
     if (entry) {
-      slot.innerHTML = `<div class="item-icon">${entry.icon}</div>`;
+      seenIds.add(entry.id);
+      slot.innerHTML = '';
       slot.classList.add('has-item');
       slot.classList.remove('empty');
       slot.classList.toggle('item-evolved', entry.evolved);
-      slot.onmouseenter = () =>
-        showTooltip(entry.name, `${entry.description}<br /><em>${entry.status}</em>`);
+      const progressLabel = entry.category === 'weapon'
+        ? entry.evolved
+          ? 'Evolved form active'
+          : entry.progress
+            ? entry.progress.ready
+              ? 'Ready to evolve!'
+              : `${entry.progress.current}/${entry.progress.required} ${entry.progress.label} to evolve`
+            : 'Awakening'
+        : 'Passive effect active';
+      const detailProgress = entry.evolved
+        ? 'Evolved'
+        : entry.progress
+          ? `${entry.progress.current}/${entry.progress.required} ${entry.progress.label}`
+          : entry.status;
+
+      const iconElement = document.createElement('div');
+      iconElement.className = 'item-icon';
+      iconElement.textContent = entry.icon;
+      slot.appendChild(iconElement);
+
+      const info = document.createElement('div');
+      info.className = 'item-info';
+      slot.appendChild(info);
+
+      const name = document.createElement('div');
+      name.className = 'item-name';
+      name.textContent = entry.name;
+      info.appendChild(name);
+
+      const progressText = document.createElement('div');
+      progressText.className = 'item-progress-text';
+      progressText.textContent = progressLabel;
+      const readyToEvolve = !!entry.progress?.ready && !entry.evolved;
+      progressText.classList.toggle('ready', readyToEvolve);
+      info.appendChild(progressText);
+
+      slot.dataset.itemId = entry.id;
+      slot.title = `${entry.name} — ${progressLabel}`;
+      slot.classList.toggle('evolution-ready', readyToEvolve);
+      const wasReady = evolutionReadyState.get(entry.id) ?? false;
+      if (readyToEvolve && !wasReady) {
+        playEvolutionReadyCue();
+        slot.classList.add('evolution-ready-flash');
+        const handleAnimationEnd = () => {
+          slot.classList.remove('evolution-ready-flash');
+          slot.removeEventListener('animationend', handleAnimationEnd);
+        };
+        slot.addEventListener('animationend', handleAnimationEnd);
+      } else if (!readyToEvolve) {
+        slot.classList.remove('evolution-ready-flash');
+      }
+      evolutionReadyState.set(entry.id, readyToEvolve);
+
+      const tooltipBody = `${entry.description}<br /><em>${progressLabel}</em>`;
+      slot.onmouseenter = () => showTooltip(entry.name, tooltipBody);
       slot.onmouseleave = hideTooltip;
       slot.onclick = (event) => {
         if (!(event.target instanceof HTMLElement)) {
           return;
         }
-        if (event.target.closest('.item-icon')) {
-          openItemDetail(entry.id, { progressText: entry.status, evolved: entry.evolved });
+        if (event.target.closest('.item-icon') || event.currentTarget === event.target) {
+          openItemDetail(entry.id, { progressText: detailProgress, evolved: entry.evolved });
         }
       };
-      const iconElement = slot.querySelector<HTMLDivElement>('.item-icon');
-      if (iconElement) {
-        iconElement.setAttribute('role', 'button');
-        iconElement.setAttribute('aria-label', `${entry.name} details`);
-        iconElement.tabIndex = 0;
-        iconElement.addEventListener('click', (event) => {
-          event.stopPropagation();
-          openItemDetail(entry.id, { progressText: entry.status, evolved: entry.evolved });
-        });
-        iconElement.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            openItemDetail(entry.id, { progressText: entry.status, evolved: entry.evolved });
-          }
-        });
-      }
+      iconElement.setAttribute('role', 'button');
+      iconElement.setAttribute('aria-label', `${entry.name} details`);
+      iconElement.tabIndex = 0;
+      const openDetail = () => openItemDetail(entry.id, { progressText: detailProgress, evolved: entry.evolved });
+      iconElement.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openDetail();
+      });
+      iconElement.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openDetail();
+        }
+      });
     } else {
       slot.innerHTML = '';
-      slot.classList.remove('has-item', 'item-evolved');
+      slot.classList.remove('has-item', 'item-evolved', 'evolution-ready', 'evolution-ready-flash');
       slot.classList.add('empty');
+      slot.removeAttribute('data-item-id');
+      slot.removeAttribute('title');
       slot.onmouseenter = null;
       slot.onmouseleave = null;
       slot.onclick = null;
     }
+  }
+  for (const itemId of Array.from(evolutionReadyState.keys())) {
+    if (!seenIds.has(itemId)) {
+      evolutionReadyState.delete(itemId);
+    }
+  }
+  if (isInventoryOverlayOpen) {
+    renderInventoryOverlay();
   }
 }
 
@@ -999,6 +1516,85 @@ let activeQuestDialog: NearbyQuestInteraction | null = null;
 const dismissedQuestInteractions = new Set<number>();
 let lastQuestInteractionGiverId: number | null = null;
 let isBuildLedgerOpen = false;
+let isInventoryOverlayOpen = false;
+let activeInventoryPreviewId: ItemId | null = null;
+const evolutionReadyState = new Map<ItemId, boolean>();
+let isMetaOverlayOpen = false;
+let activeMetaWeaponId: WeaponItemId | null = null;
+const metaUpgradeButtons = new Map<MetaUpgradeId, HTMLButtonElement>();
+const metaWeaponButtons = new Map<WeaponItemId, HTMLButtonElement>();
+let evolutionAudioContext: AudioContext | null = null;
+
+type LoadoutEntry = ReturnType<Game['getHeroLoadout']>[number];
+let lastInventoryOverlaySignature = '';
+
+function getInventoryProgressText(entry: LoadoutEntry): { short: string; long: string } {
+  if (entry.category !== 'weapon') {
+    return {
+      short: 'Passive',
+      long: `${entry.name} — Passive effect active`
+    };
+  }
+  if (entry.evolved) {
+    return {
+      short: 'Evolved',
+      long: `${entry.name} — Evolved form active`
+    };
+  }
+  const progress = entry.progress;
+  if (!progress) {
+    return {
+      short: 'Awakening',
+      long: `${entry.name} — Awakening`
+    };
+  }
+  if (progress.ready) {
+    return {
+      short: 'Ready to Evolve',
+      long: `${entry.name} — Ready to Evolve!`
+    };
+  }
+  const base = `${progress.current}/${progress.required} ${progress.label}`;
+  return {
+    short: base,
+    long: `${entry.name} — ${base} to Evolve`
+  };
+}
+
+function playEvolutionReadyCue(): void {
+  try {
+    if (!evolutionAudioContext) {
+      const AudioCtx = (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext) as
+        | typeof AudioContext
+        | undefined;
+      if (!AudioCtx) {
+        return;
+      }
+      evolutionAudioContext = new AudioCtx();
+    }
+    const context = evolutionAudioContext;
+    if (!context) {
+      return;
+    }
+    const now = context.currentTime;
+    const duration = 0.3;
+    const oscillator = context.createOscillator();
+    oscillator.type = 'triangle';
+    oscillator.frequency.setValueAtTime(640, now);
+    oscillator.frequency.linearRampToValueAtTime(880, now + duration);
+
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + duration);
+  } catch (error) {
+    console.warn('Unable to play evolution cue', error);
+  }
+}
 
 function openBuildLedger(): void {
   if (!game.isBuildModeActive()) {
@@ -1034,6 +1630,10 @@ function disableBuildMode(): void {
 
 function setItemShopOpen(open: boolean): void {
   const nextState = open && game.isDowntime();
+  if (nextState) {
+    closeInventoryOverlay();
+    closeMetaOverlay();
+  }
   if (isItemShopOpen === nextState) {
     if (!nextState) {
       hideTooltip();
@@ -1582,6 +2182,34 @@ questLogOverlay.addEventListener('click', (event) => {
     setQuestLogOpen(false);
   }
 });
+inventoryOverlayClose.addEventListener('click', () => closeInventoryOverlay());
+inventoryOverlay.addEventListener('click', (event) => {
+  if (event.target === inventoryOverlay) {
+    closeInventoryOverlay();
+  }
+});
+metaOverlayClose.addEventListener('click', () => closeMetaOverlay());
+metaProgressionOverlay.addEventListener('click', (event) => {
+  if (event.target === metaProgressionOverlay) {
+    closeMetaOverlay();
+  }
+});
+metaWeaponBack.addEventListener('click', () => {
+  const previous = activeMetaWeaponId;
+  metaWeaponList.classList.remove('hidden');
+  metaWeaponDetail.classList.add('hidden');
+  activeMetaWeaponId = null;
+  metaUpgradeButtons.clear();
+  metaUpgradeList.innerHTML = '';
+  metaWeaponButtons.forEach((button) => button.classList.remove('active'));
+  updateMetaShardDisplay();
+  if (previous) {
+    const previousButton = metaWeaponButtons.get(previous);
+    previousButton?.focus();
+  } else {
+    metaOverlayClose.focus();
+  }
+});
 questDialogPrimary.addEventListener('click', handleQuestDialogPrimary);
 questDialogSecondary.addEventListener('click', handleQuestDialogSecondary);
 questDialogCloseButton.addEventListener('click', handleQuestDialogSecondary);
@@ -1596,6 +2224,16 @@ window.addEventListener('keydown', (event) => {
   const key = event.key.toLowerCase();
   const code = event.code;
   if (key === 'escape') {
+    if (isMetaOverlayOpen) {
+      closeMetaOverlay();
+      event.preventDefault();
+      return;
+    }
+    if (isInventoryOverlayOpen) {
+      closeInventoryOverlay();
+      event.preventDefault();
+      return;
+    }
     if (isQuestLogOpen) {
       setQuestLogOpen(false);
       event.preventDefault();
@@ -1641,7 +2279,18 @@ window.addEventListener('keydown', (event) => {
     }
   } else if (key === 'i') {
     event.preventDefault();
-    setItemShopOpen(!isItemShopOpen);
+    if (isInventoryOverlayOpen) {
+      closeInventoryOverlay();
+    } else {
+      openInventoryOverlay();
+    }
+  } else if (key === 't') {
+    event.preventDefault();
+    if (isMetaOverlayOpen) {
+      closeMetaOverlay();
+    } else {
+      openMetaOverlay();
+    }
   } else if (key === 'q') {
     event.preventDefault();
     setQuestLogOpen(!isQuestLogOpen);
@@ -1703,6 +2352,13 @@ function updateHud() {
   }
   lastRelicShards = relicShards;
   heroShardText.textContent = `${relicShards}`;
+  updateMetaShardDisplay();
+  if (isMetaOverlayOpen) {
+    for (const track of META_WEAPON_TRACKS) {
+      updateMetaWeaponCard(track.weaponId);
+    }
+    refreshMetaUpgradeButtons();
+  }
   const hp = Math.max(0, game.knight.hp);
   const hpRatio = Math.max(0, Math.min(1, hp / KNIGHT_HP));
   heroHealthBar.style.width = `${hpRatio * 100}%`;
