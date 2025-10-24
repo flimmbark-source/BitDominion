@@ -117,13 +117,32 @@ function ensureTypeScriptMimeType(): Plugin {
 
   return {
     name: 'ensure-typescript-mime-type',
+    /**
+     * Register the TypeScript MIME normalisation middleware for both the dev
+     * server and the preview server. In Vite v5 the internal Connect stack is
+     * no longer exposed as `.middlewares.stack`, and middleware should be
+     * registered via the `use()` method instead. Falling back to the old
+     * approach allows the plugin to work with older Vite versions too.
+     */
     configureServer(server) {
-      const stack = server.middlewares.stack as Array<{ route: string; handle: ConnectMiddleware }>;
-      stack.unshift({ route: '', handle: middleware });
+      const middlewares: any = (server as any).middlewares;
+      if (middlewares && typeof middlewares.use === 'function') {
+        // Vite 5: use the public API to register middleware.
+        middlewares.use(middleware);
+      } else if (middlewares && Array.isArray((middlewares as any).stack)) {
+        // Vite 4 and earlier: insert the middleware at the beginning of the stack.
+        const stack = (middlewares as any).stack as Array<{ route: string; handle: ConnectMiddleware }>;
+        stack.unshift({ route: '', handle: middleware });
+      }
     },
     configurePreviewServer(server) {
-      const stack = server.middlewares.stack as Array<{ route: string; handle: ConnectMiddleware }>;
-      stack.unshift({ route: '', handle: middleware });
+      const middlewares: any = (server as any).middlewares;
+      if (middlewares && typeof middlewares.use === 'function') {
+        middlewares.use(middleware);
+      } else if (middlewares && Array.isArray((middlewares as any).stack)) {
+        const stack = (middlewares as any).stack as Array<{ route: string; handle: ConnectMiddleware }>;
+        stack.unshift({ route: '', handle: middleware });
+      }
     }
   };
 }
