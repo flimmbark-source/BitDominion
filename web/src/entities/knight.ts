@@ -7,7 +7,6 @@ import {
   KNIGHT_BOW_DAMAGE,
   KNIGHT_BOW_PROJECTILE_SPEED,
   KNIGHT_BOW_RANGE,
-  KNIGHT_COLOR,
   KNIGHT_FRICTION,
   KNIGHT_SPEED,
   KNIGHT_HP,
@@ -196,8 +195,69 @@ export class Knight {
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
-    ctx.fillStyle = KNIGHT_COLOR;
-    ctx.fillRect(this.pos.x - KNIGHT_SIZE / 2, this.pos.y - KNIGHT_SIZE / 2, KNIGHT_SIZE, KNIGHT_SIZE);
+    const bodyRadius = KNIGHT_SIZE * 0.45;
+    const headRadius = KNIGHT_SIZE * 0.22;
+
+    ctx.save();
+    ctx.translate(this.pos.x, this.pos.y);
+
+    ctx.fillStyle = '#0C5B25';
+    ctx.beginPath();
+    ctx.moveTo(-bodyRadius * 0.9, 0);
+    ctx.quadraticCurveTo(-bodyRadius * 1.1, bodyRadius * 0.6, -bodyRadius * 0.3, bodyRadius * 1.25);
+    ctx.lineTo(bodyRadius * 0.3, bodyRadius * 1.25);
+    ctx.quadraticCurveTo(bodyRadius * 1.1, bodyRadius * 0.6, bodyRadius * 0.9, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#166F33';
+    ctx.beginPath();
+    ctx.arc(0, 0, bodyRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#08391A';
+    ctx.stroke();
+
+    ctx.fillStyle = '#21C35A';
+    ctx.beginPath();
+    ctx.arc(0, -bodyRadius * 0.2, bodyRadius * 0.55, Math.PI * 0.15, Math.PI * 0.85);
+    ctx.lineTo(0, bodyRadius * 0.7);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#0E4C24';
+    ctx.beginPath();
+    ctx.moveTo(-bodyRadius * 0.65, 0);
+    ctx.lineTo(bodyRadius * 0.65, 0);
+    ctx.stroke();
+
+    ctx.fillStyle = '#E3E3E3';
+    ctx.beginPath();
+    ctx.arc(0, -bodyRadius * 0.9, headRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#8F8F8F';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+
+    ctx.fillStyle = '#2B4D96';
+    ctx.beginPath();
+    ctx.moveTo(-bodyRadius * 0.3, -bodyRadius * 0.2);
+    ctx.lineTo(bodyRadius * 0.6, -bodyRadius * 0.4);
+    ctx.lineTo(bodyRadius * 0.55, bodyRadius * 0.4);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#F1CE62';
+    ctx.beginPath();
+    ctx.arc(bodyRadius * 0.3, -bodyRadius * 0.2, bodyRadius * 0.24, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#A67C21';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    ctx.restore();
   }
 
   drawSwing(ctx: CanvasRenderingContext2D): void {
