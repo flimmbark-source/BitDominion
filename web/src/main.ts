@@ -5,7 +5,8 @@ import {
   WIDTH,
   VIEWPORT_HEIGHT,
   KNIGHT_HP,
-  BuildingType
+  BuildingType,
+  DOWNTIME_DURATION
 } from './config/constants';
 import { getBuildingDefinition } from './entities/building';
 import { ITEM_DEFINITIONS, ITEM_ORDER, ItemId } from './config/items';
@@ -38,7 +39,7 @@ const BUILDING_DISPLAY: Record<BuildingType, { icon: string; name: string; descr
   }
 };
 
-type TutorialStepId = 'move' | 'workshop' | 'buildPlacement' | 'arsenal';
+type TutorialStepId = 'movement' | 'combat' | 'building' | 'noise' | 'quests' | 'healing';
 
 interface TutorialStepDefinition {
   readonly title: string;
@@ -48,31 +49,46 @@ interface TutorialStepDefinition {
 }
 
 const TUTORIAL_STEPS: Record<TutorialStepId, TutorialStepDefinition> = {
-  move: {
-    title: 'Move the Knight',
-    body: 'Left-click anywhere on the map to send the knight toward that spot.',
+  movement: {
+    title: 'Movement Basics',
+    body: 'Left-click the ground to guide Rowan. Use the camera if you need to scout ahead.',
     icon: '🧭',
     keys: ['Left Click']
   },
-  workshop: {
-    title: 'Open the Workshop',
-    body: 'Press B or click the hammer button to open the Workshop ledger and choose a structure.',
-    icon: '🔨',
-    keys: ['B']
-  },
-  buildPlacement: {
-    title: 'Place a Structure',
-    body: 'Select a blueprint, then left-click to place its foundation. Right-click or press Esc to cancel build mode.',
-    icon: '🏗️',
-    keys: ['Left Click', 'Right Click', 'Esc']
-  },
-  arsenal: {
-    title: 'Check the Hero Arsenal',
-    body: 'Press I during downtime to open the Hero Arsenal and spend supplies on new gear.',
+  combat: {
+    title: 'Hold the Line',
+    body: 'During waves, stay mobile and kite patrols. Rowan swings at nearby foes automatically when they get close.',
     icon: '⚔️',
-    keys: ['I']
+    keys: ['Left Click']
+  },
+  building: {
+    title: 'Raise Defenses',
+    body: 'Press B or tap the hammer button to open the Workshop. Choose a structure, then left-click to place it.',
+    icon: '🏗️',
+    keys: ['B', 'Left Click']
+  },
+  noise: {
+    title: 'Noise & Suspicion',
+    body: 'Attacks, sprinting, and some buildings create pulses that alert patrols. Watch the orange rings and reposition if things get loud.',
+    icon: '🔊'
+  },
+  quests: {
+    title: 'Village Quests',
+    body: 'Approach quest givers to accept side objectives. Finish them during downtime for supplies and buffs.',
+    icon: '📜'
+  },
+  healing: {
+    title: 'Catch Your Breath',
+    body: 'Rest inside the Emberwatch inn during downtime to slowly restore Rowan’s health before the next assault.',
+    icon: '💖'
   }
 };
+
+interface TutorialManagerOptions {
+  readonly onPause?: () => void;
+  readonly onResume?: () => void;
+  readonly onComplete?: (id: TutorialStepId) => void;
+}
 
 class TutorialManager {
   private readonly completed = new Set<TutorialStepId>();
@@ -80,7 +96,7 @@ class TutorialManager {
   private active: TutorialStepId | null = null;
   private activeElement: HTMLDivElement | null = null;
 
-  constructor(private readonly layer: HTMLDivElement) {}
+  constructor(private readonly layer: HTMLDivElement, private readonly options: TutorialManagerOptions = {}) {}
 
   request(id: TutorialStepId, options?: { priority?: boolean }): void {
     if (this.completed.has(id) || this.queue.includes(id) || this.active === id) {
@@ -103,12 +119,17 @@ class TutorialManager {
     if (this.active === id) {
       this.removeActiveHint();
     }
+    this.options.onComplete?.(id);
     this.maybeShowNext();
     return true;
   }
 
   isCompleted(id: TutorialStepId): boolean {
     return this.completed.has(id);
+  }
+
+  isQueued(id: TutorialStepId): boolean {
+    return this.queue.includes(id) || this.active === id;
   }
 
   private maybeShowNext(): void {
@@ -130,6 +151,8 @@ class TutorialManager {
     const card = document.createElement('div');
     card.className = 'tutorial-hint-card';
     card.dataset.step = id;
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
 
     const header = document.createElement('div');
     header.className = 'tutorial-hint-header';
@@ -142,12 +165,18 @@ class TutorialManager {
     const title = document.createElement('h2');
     title.className = 'tutorial-hint-title';
     title.textContent = step.title;
+    const titleId = `tutorial-${id}-title`;
+    title.id = titleId;
 
     header.append(icon, title);
 
     const body = document.createElement('p');
     body.className = 'tutorial-hint-body';
     body.textContent = step.body;
+    const bodyId = `tutorial-${id}-body`;
+    body.id = bodyId;
+    card.setAttribute('aria-labelledby', titleId);
+    card.setAttribute('aria-describedby', bodyId);
 
     card.append(header, body);
 
@@ -187,6 +216,8 @@ class TutorialManager {
     this.layer.appendChild(card);
     this.active = id;
     this.activeElement = card;
+    this.options.onPause?.();
+    dismissButton.focus();
   }
 
   private removeActiveHint(): void {
@@ -195,6 +226,7 @@ class TutorialManager {
     }
     this.active = null;
     this.activeElement = null;
+    this.options.onResume?.();
   }
 
   private skipAll(): void {
@@ -234,7 +266,10 @@ appRootElement.innerHTML = `
       <canvas id="gameCanvas" class="game-canvas"></canvas>
       <div class="camp-marker-layer" id="campMarkerLayer"></div>
       <div class="dark-energy ui-panel" id="darkEnergyClock">
-        <h2>Dark Energy</h2>
+        <div class="panel-heading">
+          <h2>Dark Energy</h2>
+          <button class="info-button" id="downtimeInfo" type="button" aria-label="Downtime timing help">?</button>
+        </div>
         <div class="bar"><div class="bar-fill" id="darkEnergyFill"></div></div>
         <p id="darkEnergyText">Gathering energy…</p>
       </div>
@@ -269,6 +304,10 @@ appRootElement.innerHTML = `
             </div>
             <span class="health-text" id="heroHealthText">${KNIGHT_HP}/${KNIGHT_HP}</span>
           </div>
+        </div>
+        <div class="hud-info-buttons" role="group" aria-label="Gameplay tips">
+          <button class="info-button" id="mapControlsInfo" type="button" aria-label="Map controls help">?</button>
+          <button class="info-button" id="noiseInfo" type="button" aria-label="Noise and suspicion help">?</button>
         </div>
         <button class="ui-panel build-toggle" id="buildPrompt" type="button">
           <span class="build-toggle-icon" aria-hidden="true">🔨</span>
@@ -491,6 +530,7 @@ const buildPrompt = requireElement<HTMLButtonElement>('#buildPrompt');
 const buildErrorMessage = requireElement<HTMLDivElement>('#buildErrorMessage');
 const darkEnergyFill = requireElement<HTMLDivElement>('#darkEnergyFill');
 const darkEnergyText = requireElement<HTMLParagraphElement>('#darkEnergyText');
+const downtimeInfoButton = requireElement<HTMLButtonElement>('#downtimeInfo');
 const buffList = requireElement<HTMLUListElement>('#buffList');
 const campMarkerLayer = requireElement<HTMLDivElement>('#campMarkerLayer');
 const buildingShopPanel = requireElement<HTMLDivElement>('#buildingShopPanel');
@@ -534,6 +574,8 @@ const questDialogCloseButton = requireElement<HTMLButtonElement>('#questDialogCl
 const tutorialHintLayer = requireElement<HTMLDivElement>('#tutorialHintLayer');
 const loreBanner = requireElement<HTMLDivElement>('#loreBanner');
 const loreBannerDismissButton = requireElement<HTMLButtonElement>('#loreBannerDismiss');
+const mapControlsInfoButton = requireElement<HTMLButtonElement>('#mapControlsInfo');
+const noiseInfoButton = requireElement<HTMLButtonElement>('#noiseInfo');
 
 const LORE_BANNER_STORAGE_KEY = 'bitdominion.loreBannerDismissed';
 
@@ -572,14 +614,35 @@ loreBannerDismissButton.addEventListener('click', () => {
   hideLoreBanner(true);
 });
 
-const tutorialManager = new TutorialManager(tutorialHintLayer);
-tutorialManager.request('move');
-tutorialManager.request('workshop');
+let tutorialPaused = false;
+
+const tutorialManager = new TutorialManager(tutorialHintLayer, {
+  onPause: () => {
+    tutorialPaused = true;
+  },
+  onResume: () => {
+    tutorialPaused = false;
+  }
+});
+tutorialManager.request('movement', { priority: true });
+
+game.setNoiseListener((strength) => {
+  if (
+    strength > 0 &&
+    tutorialManager.isCompleted('building') &&
+    !tutorialManager.isCompleted('noise') &&
+    !tutorialManager.isQueued('noise')
+  ) {
+    tutorialManager.request('noise', { priority: true });
+  }
+});
 
 let lastSupplies = game.getSupplies();
 let lastRelicShards = game.getRelicShards();
 let pendingGoldGain = 0;
 let pendingShardGain = 0;
+let lastKillCount = game.getTotalKills();
+let lastAtTavern = game.isKnightAtTavern();
 
 function resetGoldGainIndicator(): void {
   pendingGoldGain = 0;
@@ -646,6 +709,16 @@ function hideTooltip() {
   tooltipPanel.style.display = 'none';
 }
 
+function bindInfoTooltip(button: HTMLButtonElement, title: string, body: string): void {
+  const show = () => showTooltip(title, body);
+  const hide = () => hideTooltip();
+  button.addEventListener('mouseenter', show);
+  button.addEventListener('mouseleave', hide);
+  button.addEventListener('focus', show);
+  button.addEventListener('blur', hide);
+  button.addEventListener('click', show);
+}
+
 function formatTimer(seconds: number): string {
   const clamped = Math.max(0, seconds);
   if (clamped < 10) {
@@ -658,6 +731,22 @@ function formatTimer(seconds: number): string {
   }
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
+
+bindInfoTooltip(
+  mapControlsInfoButton,
+  'Map Controls',
+  'Use WASD to pan the camera, scroll to zoom in or out, and press Space to snap back to Rowan.'
+);
+bindInfoTooltip(
+  noiseInfoButton,
+  'Noise & Suspicion',
+  'Orange pulses mark noise that raises suspicion. Patrols will investigate loud spots, so reposition or lure them away.'
+);
+bindInfoTooltip(
+  downtimeInfoButton,
+  'Downtime & Waves',
+  `This meter counts the ${formatTimer(DOWNTIME_DURATION)} downtime window. Build, heal, and gear up before it fills and the next wave begins.`
+);
 
 document.addEventListener('pointermove', (event) => {
   if (tooltipPanel.style.display === 'none') {
@@ -918,9 +1007,8 @@ function openBuildLedger(): void {
   if (!isBuildLedgerOpen) {
     isBuildLedgerOpen = true;
   }
-  tutorialManager.complete('workshop');
-  if (!tutorialManager.isCompleted('buildPlacement')) {
-    tutorialManager.request('buildPlacement', { priority: true });
+  if (!tutorialManager.isCompleted('building') && !tutorialManager.isQueued('building')) {
+    tutorialManager.request('building', { priority: true });
   }
   updateBuildingShopButtons();
 }
@@ -954,9 +1042,6 @@ function setItemShopOpen(open: boolean): void {
     return;
   }
   isItemShopOpen = nextState;
-  if (isItemShopOpen) {
-    tutorialManager.complete('arsenal');
-  }
   if (isItemShopOpen && game.isBuildModeActive()) {
     disableBuildMode();
   }
@@ -1263,6 +1348,13 @@ function setQuestLogOpen(open: boolean): void {
 }
 
 function showQuestDialog(interaction: NearbyQuestInteraction): void {
+  if (
+    tutorialManager.isCompleted('noise') &&
+    !tutorialManager.isCompleted('quests') &&
+    !tutorialManager.isQueued('quests')
+  ) {
+    tutorialManager.request('quests', { priority: true });
+  }
   activeQuestDialog = interaction;
   questDialogElement.classList.remove('hidden');
   questDialogElement.setAttribute('aria-hidden', 'false');
@@ -1419,12 +1511,10 @@ canvas.addEventListener('pointerdown', (event) => {
   game.onPointerDown(x, y, event.button, event.timeStamp / 1000);
   const buildingCountAfter = game.getBuildings().length;
   if (event.button === 0 && !wasBuildModeActive) {
-    tutorialManager.complete('move');
+    tutorialManager.complete('movement');
   }
   if (buildingCountAfter > buildingCountBefore) {
-    if (tutorialManager.complete('buildPlacement')) {
-      tutorialManager.request('arsenal');
-    }
+    tutorialManager.complete('building');
   }
 });
 
@@ -1535,6 +1625,8 @@ window.addEventListener('keydown', (event) => {
     updateItemShopButtons();
     lastSupplies = game.getSupplies();
     resetGoldGainIndicator();
+    lastKillCount = game.getTotalKills();
+    lastAtTavern = game.isKnightAtTavern();
   } else if (key === 'b') {
     event.preventDefault();
     setItemShopOpen(false);
@@ -1616,6 +1708,16 @@ function updateHud() {
   heroHealthBar.style.width = `${hpRatio * 100}%`;
   heroHealthText.textContent = `${Math.ceil(hp)}/${KNIGHT_HP}`;
 
+  const kills = game.getTotalKills();
+  if (
+    kills > lastKillCount &&
+    tutorialManager.isCompleted('movement') &&
+    !tutorialManager.isCompleted('combat')
+  ) {
+    tutorialManager.request('combat', { priority: true });
+  }
+  lastKillCount = kills;
+
   const { phase, remaining, duration, waveIndex } = game.getPhaseTimerInfo();
   const progress = duration > 0 ? 1 - Math.max(0, Math.min(1, remaining / duration)) : 1;
   darkEnergyFill.style.width = `${progress * 100}%`;
@@ -1640,9 +1742,35 @@ function updateHud() {
     tavernAutoOpen = false;
   }
 
+  if (
+    atTavern &&
+    !lastAtTavern &&
+    tutorialManager.isCompleted('quests') &&
+    !tutorialManager.isCompleted('healing') &&
+    !tutorialManager.isQueued('healing')
+  ) {
+    tutorialManager.request('healing', { priority: true });
+  }
+  lastAtTavern = atTavern;
+
   if (lastPhase !== phase) {
     if (phase === 'wave') {
       setItemShopOpen(false);
+      if (
+        tutorialManager.isCompleted('movement') &&
+        !tutorialManager.isCompleted('combat') &&
+        !tutorialManager.isQueued('combat')
+      ) {
+        tutorialManager.request('combat', { priority: true });
+      }
+    } else if (phase === 'downtime') {
+      if (
+        tutorialManager.isCompleted('combat') &&
+        !tutorialManager.isCompleted('building') &&
+        !tutorialManager.isQueued('building')
+      ) {
+        tutorialManager.request('building', { priority: true });
+      }
     }
     lastPhase = phase;
   }
@@ -1685,10 +1813,15 @@ function updateHud() {
 const ctx = context;
 let lastTime = performance.now();
 function frame(now: number) {
-  const dt = Math.min((now - lastTime) / 1000, 0.2);
+  const elapsed = now - lastTime;
   lastTime = now;
-  updateCameraPosition(dt);
-  game.update(dt);
+  const dt = Math.min(elapsed / 1000, 0.2);
+  if (!tutorialPaused) {
+    updateCameraPosition(dt);
+    game.update(dt);
+  } else {
+    updateCameraPosition(0);
+  }
   const cameraState: CameraState = {
     center: camera.center,
     zoom: camera.zoom,
