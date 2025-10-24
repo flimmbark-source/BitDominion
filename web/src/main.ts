@@ -711,7 +711,7 @@ function openItemDetail(itemId: ItemId, options?: ItemDetailOptions): void {
   }
   hideTooltip();
   activeItemDetailId = itemId;
-  const costText = definition.cost > 0 ? `${definition.cost} Supplies` : 'Starting gear';
+  const costText = definition.cost > 0 ? `${definition.cost} Gold` : 'Starting gear';
   const categoryText = definition.category === 'weapon' ? 'Weapon' : 'Support';
   itemDetailIcon.textContent = definition.icon;
   itemDetailTitle.textContent = definition.name;
@@ -842,7 +842,7 @@ function populateBuildingShop() {
     const definition = getBuildingDefinition(type);
     const button = document.createElement('button');
     button.className = 'shop-button';
-    button.innerHTML = `<span>${info.icon} ${info.name}</span><span class="price">${definition.cost} Supplies</span>`;
+    button.innerHTML = `<span>${info.icon} ${info.name}</span><span class="price">${definition.cost} Gold</span>`;
     button.addEventListener('click', () => {
       const index = game.getBuildOrder().indexOf(type);
       if (index >= 0) {
@@ -1026,7 +1026,7 @@ function updateItemShopButtons(): void {
       } else if (!inDowntime) {
         priceSpan.textContent = 'Closed during wave';
       } else {
-        priceSpan.textContent = `${definition.cost} Supplies`;
+        priceSpan.textContent = `${definition.cost} Gold`;
       }
     }
     const disabled = owned || !canPurchase || !inDowntime;
