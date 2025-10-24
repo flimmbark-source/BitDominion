@@ -142,6 +142,15 @@ export default defineConfig(() => {
       host: '0.0.0.0',
       port: previewPort,
       strictPort: true
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          entryFileNames: 'assets/[name].js',
+          chunkFileNames: 'assets/[name].js',
+          assetFileNames: 'assets/[name][extname]'
+        }
+      }
     }
   };
 });

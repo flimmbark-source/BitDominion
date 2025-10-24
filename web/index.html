@@ -8,6 +8,29 @@
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module">
+      const loadApplication = async () => {
+        const env = (typeof import.meta !== 'undefined' && import.meta.env) || undefined;
+        const isProdBuild = Boolean(env?.PROD);
+
+        if (isProdBuild) {
+          await import('./src/main.ts');
+          return;
+        }
+
+        try {
+          await import('/src/main.ts');
+        } catch (error) {
+          if (error instanceof TypeError && error.message.includes('MIME')) {
+            const fallbackEntry = './assets/index.js';
+            await import(/* @vite-ignore */ fallbackEntry);
+            return;
+          }
+          throw error;
+        }
+      };
+
+      loadApplication();
+    </script>
   </body>
 </html>
