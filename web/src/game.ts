@@ -1352,6 +1352,8 @@ export class Game {
 
     ctx.restore();
 
+    this._drawDirectionalIndicators(ctx, camera);
+
     if (this.canvasHudEnabled) {
       this._drawHud(ctx);
     }
@@ -2778,6 +2780,104 @@ export class Game {
     ctx.moveTo(position.x, position.y - 8);
     ctx.lineTo(position.x, position.y + 8);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  private _drawDirectionalIndicators(ctx: CanvasRenderingContext2D, camera: CameraState): void {
+    const targets: { position: Vector2; color: string; icon: string }[] = [];
+
+    for (const marker of this.questMarkers) {
+      if (!marker.visible) {
+        continue;
+      }
+      targets.push({ position: marker.position, color: 'rgba(251, 191, 36, 0.95)', icon: marker.icon });
+    }
+
+    for (const camp of this.creepCamps) {
+      if (camp.cleared) {
+        continue;
+      }
+      targets.push({ position: camp.position, color: 'rgba(96, 165, 250, 0.95)', icon: '⚔' });
+    }
+
+    if (!targets.length) {
+      return;
+    }
+
+    const { center, zoom, viewportWidth, viewportHeight } = camera;
+    const margin = 36;
+    const halfWidth = viewportWidth / 2 - margin;
+    const halfHeight = viewportHeight / 2 - margin;
+    const arrowLength = 26;
+    const arrowWidth = 14;
+    const labelDistance = 40;
+
+    if (halfWidth <= 0 || halfHeight <= 0) {
+      return;
+    }
+
+    ctx.save();
+    ctx.font = '16px Inter';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (const target of targets) {
+      const vx = (target.position.x - center.x) * zoom;
+      const vy = (target.position.y - center.y) * zoom;
+
+      if (Math.abs(vx) <= halfWidth && Math.abs(vy) <= halfHeight) {
+        continue;
+      }
+
+      let scale = 1;
+      if (Math.abs(vx) > halfWidth) {
+        scale = Math.min(scale, halfWidth / Math.abs(vx));
+      }
+      if (Math.abs(vy) > halfHeight) {
+        scale = Math.min(scale, halfHeight / Math.abs(vy));
+      }
+
+      if (!Number.isFinite(scale) || scale <= 0) {
+        continue;
+      }
+
+      const arrowX = viewportWidth / 2 + vx * scale;
+      const arrowY = viewportHeight / 2 + vy * scale;
+      const angle = Math.atan2(vy, vx);
+
+      ctx.save();
+      ctx.translate(arrowX, arrowY);
+      ctx.rotate(angle);
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = target.color;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-arrowLength, arrowWidth / 2);
+      ctx.lineTo(-arrowLength, -arrowWidth / 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(17, 24, 39, 0.9)';
+      ctx.stroke();
+      ctx.restore();
+
+      const labelX = arrowX - Math.cos(angle) * labelDistance;
+      const labelY = arrowY - Math.sin(angle) * labelDistance;
+
+      ctx.save();
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = 'rgba(17, 24, 39, 0.85)';
+      ctx.beginPath();
+      ctx.arc(labelX, labelY, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = target.color;
+      ctx.stroke();
+      ctx.fillStyle = '#f9fafb';
+      ctx.fillText(target.icon, labelX, labelY + 0.5);
+      ctx.restore();
+    }
+
     ctx.restore();
   }
 
