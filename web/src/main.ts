@@ -38,7 +38,7 @@ const BUILDING_DISPLAY: Record<BuildingType, { icon: string; name: string; descr
   }
 };
 
-const INVENTORY_SLOTS = 6;
+const INVENTORY_SLOTS = ITEM_ORDER.length + 1;
 const INITIAL_CAMERA_ZOOM = 1.6;
 const MIN_CAMERA_ZOOM = 0.75;
 const MAX_CAMERA_ZOOM = 2.5;
@@ -273,6 +273,7 @@ focusCameraOnKnight({ zoom: INITIAL_CAMERA_ZOOM });
 
 const tooltipPanel = requireElement<HTMLDivElement>('#tooltipPanel');
 const inventoryPanel = requireElement<HTMLDivElement>('#inventoryPanel');
+inventoryPanel.style.setProperty('--inventory-columns', `${INVENTORY_SLOTS}`);
 const heroGoldText = requireElement<HTMLSpanElement>('#heroGoldText');
 const heroGoldGain = requireElement<HTMLSpanElement>('#heroGoldGain');
 const heroShardText = requireElement<HTMLSpanElement>('#heroShardText');
