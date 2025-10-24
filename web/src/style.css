@@ -234,12 +234,13 @@ body {
   justify-content: center;
   gap: 12px;
   width: min(100%, 980px);
-  pointer-events: auto;
+  pointer-events: none;
   flex-wrap: wrap;
 }
 
 .hud-section {
   display: flex;
+  pointer-events: none;
 }
 
 .hud-section--left,
@@ -257,6 +258,12 @@ body {
   align-items: center;
   gap: 0;
   min-width: 0;
+}
+
+.hud .ui-panel,
+.hud .build-toggle,
+.hud .hud-info-buttons {
+  pointer-events: auto;
 }
 
 .hud-center-row {
