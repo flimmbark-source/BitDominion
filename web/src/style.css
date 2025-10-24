@@ -276,7 +276,7 @@ body {
 
 .inventory {
   display: grid;
-  grid-template-columns: repeat(6, 48px);
+  grid-template-columns: repeat(var(--inventory-columns, 6), 48px);
   gap: 8px;
   padding: 12px;
 }
