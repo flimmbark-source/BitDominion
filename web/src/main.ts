@@ -319,10 +319,6 @@ appRootElement.innerHTML = `
                 </div>
                 <span class="health-text" id="heroHealthText">${KNIGHT_HP}/${KNIGHT_HP}</span>
               </div>
-              <div class="hud-info-buttons" role="group" aria-label="Gameplay tips">
-                <button class="info-button" id="mapControlsInfo" type="button" aria-label="Map controls help">?</button>
-                <button class="info-button" id="noiseInfo" type="button" aria-label="Noise and suspicion help">?</button>
-              </div>
             </div>
           </div>
           <div class="hud-section hud-section--center">
@@ -469,6 +465,36 @@ appRootElement.innerHTML = `
           <div class="item-detail-section hidden" id="itemDetailTipsSection">
             <h3 class="item-detail-section-title">Build Paths</h3>
             <ul class="item-detail-tip-list" id="itemDetailTips"></ul>
+          </div>
+        </div>
+      </div>
+      <div class="escape-menu hidden" id="escapeMenu" aria-hidden="true">
+        <div class="escape-menu-panel" role="dialog" aria-modal="true" aria-labelledby="escapeMenuTitle">
+          <div class="escape-menu-header">
+            <h2 class="escape-menu-title" id="escapeMenuTitle">Campfire Menu</h2>
+            <button class="escape-menu-close" id="escapeMenuClose" type="button" aria-label="Close menu">×</button>
+          </div>
+          <div class="escape-menu-actions">
+            <button class="escape-menu-button primary" id="escapeMenuResume" type="button">Resume Adventure</button>
+            <button
+              class="escape-menu-button"
+              id="escapeMenuHelpToggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="escapeMenuHelpContent"
+            >
+              Help &amp; Tips
+            </button>
+          </div>
+          <div class="escape-menu-help hidden" id="escapeMenuHelpContent" aria-hidden="true">
+            <div class="escape-menu-help-section">
+              <h3>Map Controls</h3>
+              <p>Use WASD to pan the camera, scroll to zoom in or out, and press Space to snap back to Rowan.</p>
+            </div>
+            <div class="escape-menu-help-section">
+              <h3>Noise &amp; Suspicion</h3>
+              <p>Orange pulses mark noise that raises suspicion. Patrols will investigate loud spots, so reposition or lure them away.</p>
+            </div>
           </div>
         </div>
       </div>
@@ -676,8 +702,11 @@ const questDialogCloseButton = requireElement<HTMLButtonElement>('#questDialogCl
 const tutorialHintLayer = requireElement<HTMLDivElement>('#tutorialHintLayer');
 const loreBanner = requireElement<HTMLDivElement>('#loreBanner');
 const loreBannerDismissButton = requireElement<HTMLButtonElement>('#loreBannerDismiss');
-const mapControlsInfoButton = requireElement<HTMLButtonElement>('#mapControlsInfo');
-const noiseInfoButton = requireElement<HTMLButtonElement>('#noiseInfo');
+const escapeMenu = requireElement<HTMLDivElement>('#escapeMenu');
+const escapeMenuResumeButton = requireElement<HTMLButtonElement>('#escapeMenuResume');
+const escapeMenuCloseButton = requireElement<HTMLButtonElement>('#escapeMenuClose');
+const escapeMenuHelpToggle = requireElement<HTMLButtonElement>('#escapeMenuHelpToggle');
+const escapeMenuHelpContent = requireElement<HTMLDivElement>('#escapeMenuHelpContent');
 
 const LORE_BANNER_STORAGE_KEY = 'bitdominion.loreBannerDismissed';
 
@@ -714,6 +743,21 @@ if (loreBannerDismissed) {
 
 loreBannerDismissButton.addEventListener('click', () => {
   hideLoreBanner(true);
+});
+
+escapeMenuResumeButton.addEventListener('click', () => closeEscapeMenu());
+escapeMenuCloseButton.addEventListener('click', () => closeEscapeMenu());
+escapeMenuHelpToggle.addEventListener('click', () => {
+  const expanded = escapeMenuHelpToggle.getAttribute('aria-expanded') === 'true';
+  const nextExpanded = !expanded;
+  escapeMenuHelpToggle.setAttribute('aria-expanded', String(nextExpanded));
+  escapeMenuHelpContent.classList.toggle('hidden', !nextExpanded);
+  escapeMenuHelpContent.setAttribute('aria-hidden', nextExpanded ? 'false' : 'true');
+});
+escapeMenu.addEventListener('click', (event) => {
+  if (event.target === escapeMenu) {
+    closeEscapeMenu();
+  }
 });
 
 let tutorialPaused = false;
@@ -835,20 +879,46 @@ function formatTimer(seconds: number): string {
 }
 
 bindInfoTooltip(
-  mapControlsInfoButton,
-  'Map Controls',
-  'Use WASD to pan the camera, scroll to zoom in or out, and press Space to snap back to Rowan.'
-);
-bindInfoTooltip(
-  noiseInfoButton,
-  'Noise & Suspicion',
-  'Orange pulses mark noise that raises suspicion. Patrols will investigate loud spots, so reposition or lure them away.'
-);
-bindInfoTooltip(
   downtimeInfoButton,
   'Downtime & Waves',
   `This meter counts the ${formatTimer(DOWNTIME_DURATION)} downtime window. Build, heal, and gear up before it fills and the next wave begins.`
 );
+
+let isEscapeMenuOpen = false;
+let escapeMenuLastFocus: HTMLElement | null = null;
+
+function openEscapeMenu(): void {
+  if (isEscapeMenuOpen) {
+    return;
+  }
+  isEscapeMenuOpen = true;
+  closeInventoryOverlay();
+  closeMetaOverlay();
+  setQuestLogOpen(false);
+  setItemShopOpen(false);
+  closeItemDetail();
+  escapeMenuLastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  escapeMenuHelpToggle.setAttribute('aria-expanded', 'false');
+  escapeMenuHelpContent.classList.add('hidden');
+  escapeMenuHelpContent.setAttribute('aria-hidden', 'true');
+  escapeMenu.classList.remove('hidden');
+  escapeMenu.setAttribute('aria-hidden', 'false');
+  escapeMenuResumeButton.focus();
+}
+
+function closeEscapeMenu(options?: { restoreFocus?: boolean }): void {
+  if (!isEscapeMenuOpen) {
+    return;
+  }
+  isEscapeMenuOpen = false;
+  escapeMenu.classList.add('hidden');
+  escapeMenu.setAttribute('aria-hidden', 'true');
+  const shouldRestoreFocus = options?.restoreFocus ?? true;
+  if (shouldRestoreFocus && escapeMenuLastFocus && document.contains(escapeMenuLastFocus)) {
+    escapeMenuLastFocus.focus();
+  }
+  escapeMenuLastFocus = null;
+}
 
 document.addEventListener('pointermove', (event) => {
   if (tooltipPanel.style.display === 'none') {
@@ -1101,6 +1171,7 @@ function renderInventoryOverlay(): void {
 }
 
 function openInventoryOverlay(): void {
+  closeEscapeMenu({ restoreFocus: false });
   if (isInventoryOverlayOpen) {
     renderInventoryOverlay();
     return;
@@ -1298,6 +1369,7 @@ function showMetaWeaponDetail(weaponId: WeaponItemId): void {
 }
 
 function openMetaOverlay(): void {
+  closeEscapeMenu({ restoreFocus: false });
   if (isMetaOverlayOpen) {
     updateMetaShardDisplay();
     for (const track of META_WEAPON_TRACKS) {
@@ -1629,6 +1701,7 @@ function disableBuildMode(): void {
 function setItemShopOpen(open: boolean): void {
   const nextState = open && game.isDowntime();
   if (nextState) {
+    closeEscapeMenu({ restoreFocus: false });
     closeInventoryOverlay();
     closeMetaOverlay();
   }
@@ -1937,6 +2010,9 @@ function setQuestLogOpen(open: boolean): void {
     }
     return;
   }
+  if (nextState) {
+    closeEscapeMenu({ restoreFocus: false });
+  }
   isQuestLogOpen = nextState;
   questLogOverlay.classList.toggle('hidden', !nextState);
   questLogOverlay.setAttribute('aria-hidden', nextState ? 'false' : 'true');
@@ -2219,36 +2295,53 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
-  const key = event.key.toLowerCase();
-  const code = event.code;
-  if (key === 'escape') {
-    if (isMetaOverlayOpen) {
-      closeMetaOverlay();
+  if (event.defaultPrevented) {
+    return;
+  }
+
+  if (event.key === 'Escape') {
+    if (isEscapeMenuOpen) {
       event.preventDefault();
+      closeEscapeMenu();
+      return;
+    }
+    if (activeItemDetailId) {
+      event.preventDefault();
+      closeItemDetail();
+      return;
+    }
+    if (isMetaOverlayOpen) {
+      event.preventDefault();
+      closeMetaOverlay();
       return;
     }
     if (isInventoryOverlayOpen) {
-      closeInventoryOverlay();
       event.preventDefault();
+      closeInventoryOverlay();
       return;
     }
     if (isQuestLogOpen) {
-      setQuestLogOpen(false);
       event.preventDefault();
+      setQuestLogOpen(false);
       return;
     }
     if (!questDialogElement.classList.contains('hidden')) {
-      handleQuestDialogSecondary();
       event.preventDefault();
+      handleQuestDialogSecondary();
       return;
     }
     if (game.isBuildModeActive()) {
-      disableBuildMode();
       event.preventDefault();
+      disableBuildMode();
       return;
     }
+    event.preventDefault();
+    openEscapeMenu();
+    return;
   }
 
+  const key = event.key.toLowerCase();
+  const code = event.code;
   if (key === 'r') {
     game.reset();
     game.setCanvasHudEnabled(false);
