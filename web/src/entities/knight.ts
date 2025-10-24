@@ -291,18 +291,49 @@ export class Knight {
 
     ctx.save();
 
-    ctx.strokeStyle = `rgba(20, 200, 120, ${swooshOpacity})`;
-    ctx.lineWidth = 6;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.arc(this.pos.x, this.pos.y, swooshRadius, startAngle, currentAngle, false);
-    ctx.stroke();
+    ctx.globalCompositeOperation = 'lighter';
+    const trailCount = 3;
+    for (let i = 0; i < trailCount; i++) {
+      const trailDelay = i * 0.12;
+      const trailProgress = Math.max(0, easedProgress - trailDelay);
+      if (trailProgress <= 0) {
+        continue;
+      }
+      const arcAngle = startAngle + (endAngle - startAngle) * trailProgress;
+      const intensity = Math.max(0.2, 1 - i * 0.35);
+      ctx.strokeStyle = `rgba(40, 230, 170, ${(0.35 + swooshOpacity * 0.9) * intensity})`;
+      ctx.lineWidth = 6 - i * 1.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(this.pos.x, this.pos.y, swooshRadius - i * 1.8, startAngle, arcAngle, false);
+      ctx.stroke();
+    }
 
-    ctx.strokeStyle = `rgba(220, 220, 220, ${highlightOpacity})`;
+    ctx.globalCompositeOperation = 'source-over';
+
+    ctx.strokeStyle = `rgba(240, 255, 255, ${highlightOpacity})`;
     ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(this.pos.x, this.pos.y, radius - 1, Math.max(startAngle, currentAngle - 0.2), currentAngle, false);
+    ctx.arc(
+      this.pos.x,
+      this.pos.y,
+      radius - 1,
+      Math.max(startAngle, currentAngle - 0.22),
+      currentAngle,
+      false
+    );
     ctx.stroke();
+
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.45 + 0.35 * (1 - easedProgress)})`;
+    ctx.beginPath();
+    ctx.arc(
+      this.pos.x + Math.cos(currentAngle) * (radius - 2),
+      this.pos.y + Math.sin(currentAngle) * (radius - 2),
+      2.8 + 1.2 * (1 - easedProgress),
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
 
     ctx.save();
     ctx.translate(this.pos.x, this.pos.y);
@@ -322,6 +353,14 @@ export class Knight {
 
     ctx.fillStyle = '#F1F1F1';
     ctx.fillRect(0, -bladeWidth / 2, bladeLength, bladeWidth);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.6 + 0.3 * (1 - easedProgress)})`;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(0, -bladeWidth * 0.25);
+    ctx.lineTo(bladeLength - 1.8, -bladeWidth * 0.25);
+    ctx.moveTo(0, bladeWidth * 0.25);
+    ctx.lineTo(bladeLength - 1.8, bladeWidth * 0.25);
+    ctx.stroke();
 
     ctx.fillStyle = '#FFFFFF';
     ctx.beginPath();
