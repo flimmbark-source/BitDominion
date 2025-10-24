@@ -127,7 +127,11 @@ import { Seal } from './entities/seal';
 import { Vector2 } from './math/vector2';
 import { World } from './world';
 import type { Villager } from './world';
-import { ITEM_DEFINITIONS, ItemId } from './config/items';
+import { ITEM_DEFINITIONS, ItemId, ItemCategory } from './config/items';
+import {
+  type MetaUpgradeId,
+  getMetaUpgradeDefinition
+} from './config/metaProgression';
 
 export interface CameraState {
   center: { x: number; y: number };
@@ -437,6 +441,13 @@ interface SmokeField {
   baseDuration: number;
 }
 
+interface LoadoutProgress {
+  current: number;
+  required: number;
+  label: string;
+  ready: boolean;
+}
+
 interface HeroLoadoutEntry {
   id: ItemId;
   name: string;
@@ -444,6 +455,8 @@ interface HeroLoadoutEntry {
   description: string;
   status: string;
   evolved: boolean;
+  category: ItemCategory;
+  progress?: LoadoutProgress;
 }
 
 export class Game {
@@ -501,6 +514,7 @@ export class Game {
   private weaponDamageBonus = 0;
   private temporarySpeedBonus = 0;
   private relicShards = 0;
+  private unlockedMetaUpgrades = new Set<MetaUpgradeId>();
   private weaponOrbitVisuals: { position: Vector2; radius: number; alpha: number }[] = [];
   private smokeFields: SmokeField[] = [];
   private smokeFieldIdCounter = 1;
@@ -629,20 +643,37 @@ export class Game {
         icon: definition.icon,
         description: definition.description,
         status: '',
-        evolved: false
+        evolved: false,
+        category: definition.category
       };
       if (definition.category === 'weapon') {
         const state = this.weaponStates.get(itemId);
         const requirement = definition.evolveRequirement;
-        if (state && requirement) {
-          const progress = requirement.type === 'kills' ? state.kills : state.rescues;
-          entry.status = `${Math.min(Math.floor(progress), requirement.count)}/${requirement.count} ${requirement.label}`;
-          entry.evolved = state.evolved;
-          if (state.evolved) {
+        if (requirement) {
+          const progressValue = state
+            ? requirement.type === 'kills'
+              ? state.kills
+              : state.rescues
+            : 0;
+          const current = Math.min(Math.floor(progressValue), requirement.count);
+          const ready = !!state && !state.evolved && progressValue >= requirement.count;
+          entry.progress = {
+            current,
+            required: requirement.count,
+            label: requirement.label,
+            ready
+          };
+          entry.evolved = !!state?.evolved;
+          if (state?.evolved) {
             entry.status = 'Evolved';
+          } else if (ready) {
+            entry.status = 'Ready to evolve';
+          } else {
+            entry.status = `${current}/${requirement.count} ${requirement.label}`;
           }
         } else {
-          entry.status = 'Awakening';
+          entry.status = state?.evolved ? 'Evolved' : 'Awakening';
+          entry.evolved = !!state?.evolved;
         }
       } else {
         entry.status = 'Passive';
@@ -835,6 +866,35 @@ export class Game {
 
   getRelicShards(): number {
     return this.relicShards;
+  }
+
+  getUnlockedMetaUpgrades(): readonly MetaUpgradeId[] {
+    return Array.from(this.unlockedMetaUpgrades);
+  }
+
+  isMetaUpgradeUnlocked(id: MetaUpgradeId): boolean {
+    return this.unlockedMetaUpgrades.has(id);
+  }
+
+  canUnlockMetaUpgrade(id: MetaUpgradeId): boolean {
+    if (this.unlockedMetaUpgrades.has(id)) {
+      return false;
+    }
+    const definition = getMetaUpgradeDefinition(id);
+    if (this.relicShards < definition.cost) {
+      return false;
+    }
+    return definition.prerequisites.every((prereq) => this.unlockedMetaUpgrades.has(prereq));
+  }
+
+  unlockMetaUpgrade(id: MetaUpgradeId): boolean {
+    if (!this.canUnlockMetaUpgrade(id)) {
+      return false;
+    }
+    const definition = getMetaUpgradeDefinition(id);
+    this.relicShards -= definition.cost;
+    this.unlockedMetaUpgrades.add(id);
+    return true;
   }
 
   getPhaseTimerInfo(): { phase: GamePhase; remaining: number; duration: number; waveIndex: number } {
