@@ -94,6 +94,7 @@ appRootElement.innerHTML = `
           <span class="build-toggle-icon" aria-hidden="true">🔨</span>
           <span class="build-toggle-text">(B)uild</span>
         </button>
+        <div class="build-feedback" id="buildErrorMessage" role="status" aria-live="polite"></div>
         <div class="ui-panel inventory" id="inventoryPanel"></div>
         <div class="ui-panel buffs-panel" id="buffsPanel">
           <div class="buffs-title">Temporary Blessings</div>
@@ -306,6 +307,7 @@ const heroShardGain = requireElement<HTMLSpanElement>('#heroShardGain');
 const heroHealthBar = requireElement<HTMLDivElement>('#heroHealthBar');
 const heroHealthText = requireElement<HTMLSpanElement>('#heroHealthText');
 const buildPrompt = requireElement<HTMLButtonElement>('#buildPrompt');
+const buildErrorMessage = requireElement<HTMLDivElement>('#buildErrorMessage');
 const darkEnergyFill = requireElement<HTMLDivElement>('#darkEnergyFill');
 const darkEnergyText = requireElement<HTMLParagraphElement>('#darkEnergyText');
 const buffList = requireElement<HTMLUListElement>('#buffList');
@@ -1414,6 +1416,17 @@ function updateHud() {
       gameOverTitle.style.color = '#f87171';
       gameOverSubtext.textContent = 'Press R to try again.';
     }
+  }
+
+  const buildError = game.getBuildErrorMessage();
+  if (buildError) {
+    buildErrorMessage.textContent = buildError;
+    buildErrorMessage.classList.add('visible');
+  } else {
+    if (buildErrorMessage.textContent) {
+      buildErrorMessage.textContent = '';
+    }
+    buildErrorMessage.classList.remove('visible');
   }
 
   updateInventory();

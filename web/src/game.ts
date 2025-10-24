@@ -172,6 +172,20 @@ interface KnightProjectile {
   tint?: string;
 }
 
+interface PlacementTilePreview {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  valid: boolean;
+}
+
+interface PlacementEvaluation {
+  valid: boolean;
+  reason: string | null;
+  tiles: PlacementTilePreview[];
+}
+
 interface DarkProjectile {
   id: number;
   position: Vector2;
@@ -188,6 +202,36 @@ type QuestType = 'escort' | 'retrieve';
 
 const QUEST_INTERACTION_RADIUS = 96;
 const CREEP_APPROACH_BUFFER = 80;
+const BUILD_PREVIEW_TILE_SIZE = 12;
+
+function rectanglesOverlap(
+  leftA: number,
+  topA: number,
+  rightA: number,
+  bottomA: number,
+  leftB: number,
+  topB: number,
+  rightB: number,
+  bottomB: number
+): boolean {
+  return leftA < rightB && rightA > leftB && topA < bottomB && bottomA > topB;
+}
+
+function rectangleCircleOverlap(
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+  cx: number,
+  cy: number,
+  radius: number
+): boolean {
+  const nearestX = Math.max(left, Math.min(cx, right));
+  const nearestY = Math.max(top, Math.min(cy, bottom));
+  const dx = cx - nearestX;
+  const dy = cy - nearestY;
+  return dx * dx + dy * dy <= radius * radius;
+}
 
 interface QuestReward {
   supplies: number;
@@ -396,6 +440,8 @@ export class Game {
   private buildMode = false;
   private buildSelection: BuildingType = 'watchtower';
   private buildCursor: Vector2 | null = null;
+  private buildErrorMessage: string | null = null;
+  private buildErrorTimer = 0;
   private dismantleState: { buildingId: number; progress: number } | null = null;
   private hasWorkshopTech = false;
   private projectileIdCounter = 1;
@@ -470,6 +516,8 @@ export class Game {
     this.buildMode = false;
     this.buildSelection = 'watchtower';
     this.buildCursor = null;
+    this.buildErrorMessage = null;
+    this.buildErrorTimer = 0;
     this.dismantleState = null;
     this.hasWorkshopTech = false;
     this.projectileIdCounter = 1;
@@ -793,6 +841,10 @@ export class Game {
     return this.buildMode;
   }
 
+  getBuildErrorMessage(): string | null {
+    return this.buildErrorTimer > 0 ? this.buildErrorMessage : null;
+  }
+
   setBuildMode(enabled: boolean): void {
     if (this.buildMode === enabled) {
       return;
@@ -803,6 +855,7 @@ export class Game {
     } else {
       this.buildCursor = null;
     }
+    this._clearBuildError();
   }
 
   canAffordBlueprint(type: BuildingType): boolean {
@@ -1101,6 +1154,16 @@ export class Game {
     nearest.dismantleProgress = 0;
   }
 
+  private _setBuildError(message: string): void {
+    this.buildErrorMessage = message;
+    this.buildErrorTimer = 2.5;
+  }
+
+  private _clearBuildError(): void {
+    this.buildErrorMessage = null;
+    this.buildErrorTimer = 0;
+  }
+
   private _exitBuildMode(): void {
     this.setBuildMode(false);
   }
@@ -1111,6 +1174,12 @@ export class Game {
 
   update(dt: number): void {
     this.world.beginFrame(dt);
+    if (this.buildErrorTimer > 0) {
+      this.buildErrorTimer = Math.max(0, this.buildErrorTimer - dt);
+      if (this.buildErrorTimer === 0) {
+        this.buildErrorMessage = null;
+      }
+    }
     this._syncWorldObstacles();
     if (this.state !== 'running') {
       this._updateShield(dt);
@@ -2630,15 +2699,29 @@ export class Game {
     }
     const position = this.buildCursor;
     const { halfWidth, halfHeight } = getBuildingHalfSize(this.buildSelection);
-    const valid = this._canAfford(this.buildSelection) && this._isPlacementValid(this.buildSelection, position);
+    const evaluation = this._evaluatePlacement(this.buildSelection, position);
+    const canAfford = this._canAfford(this.buildSelection);
+    const overallValid = canAfford && evaluation.valid;
     ctx.save();
     ctx.globalAlpha = 0.55;
-    ctx.fillStyle = valid ? 'rgba(120, 220, 140, 0.6)' : 'rgba(220, 100, 100, 0.6)';
-    ctx.fillRect(position.x - halfWidth, position.y - halfHeight, halfWidth * 2, halfHeight * 2);
+    for (const tile of evaluation.tiles) {
+      const tileValid = canAfford && tile.valid;
+      ctx.fillStyle = tileValid ? 'rgba(120, 220, 140, 0.55)' : 'rgba(220, 100, 100, 0.6)';
+      ctx.fillRect(tile.left, tile.top, tile.width, tile.height);
+    }
     ctx.restore();
 
     ctx.save();
-    ctx.strokeStyle = valid ? 'rgba(120, 220, 140, 0.9)' : 'rgba(220, 100, 100, 0.9)';
+    ctx.strokeStyle = overallValid ? 'rgba(120, 220, 140, 0.9)' : 'rgba(220, 100, 100, 0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(position.x - halfWidth, position.y - halfHeight, halfWidth * 2, halfHeight * 2);
+    ctx.beginPath();
+    for (const tile of evaluation.tiles) {
+      ctx.rect(tile.left, tile.top, tile.width, tile.height);
+    }
+    ctx.strokeStyle = overallValid ? 'rgba(120, 220, 140, 0.4)' : 'rgba(220, 100, 100, 0.4)';
+    ctx.stroke();
+    ctx.strokeStyle = overallValid ? 'rgba(120, 220, 140, 0.9)' : 'rgba(220, 100, 100, 0.9)';
     ctx.beginPath();
     ctx.moveTo(position.x - 8, position.y);
     ctx.lineTo(position.x + 8, position.y);
@@ -3473,9 +3556,12 @@ export class Game {
   private _tryPlaceBuilding(position: Vector2): boolean {
     const type = this.buildSelection;
     if (!this._canAfford(type)) {
+      this._setBuildError('Not enough supplies for this structure.');
       return false;
     }
-    if (!this._isPlacementValid(type, position)) {
+    const evaluation = this._evaluatePlacement(type, position);
+    if (!evaluation.valid) {
+      this._setBuildError(evaluation.reason ?? 'Cannot place that structure here.');
       return false;
     }
     const building = createBuilding(type, position);
@@ -3483,77 +3569,222 @@ export class Game {
     this.buildings.push(building);
     this.supplies -= getBuildingDefinition(type).cost;
     this._syncWorldObstacles();
+    this._clearBuildError();
     return true;
   }
 
-  private _isPlacementValid(type: BuildingType, position: Vector2): boolean {
+  private _evaluatePlacement(type: BuildingType, position: Vector2): PlacementEvaluation {
     const { halfWidth, halfHeight } = getBuildingHalfSize(type);
-    if (
-      position.x - halfWidth < 0 ||
-      position.x + halfWidth > WIDTH ||
-      position.y - halfHeight < 0 ||
-      position.y + halfHeight > HEIGHT
-    ) {
-      return false;
+    const width = halfWidth * 2;
+    const height = halfHeight * 2;
+    const startX = position.x - halfWidth;
+    const startY = position.y - halfHeight;
+    const cols = Math.max(1, Math.ceil(width / BUILD_PREVIEW_TILE_SIZE));
+    const rows = Math.max(1, Math.ceil(height / BUILD_PREVIEW_TILE_SIZE));
+    const tiles: PlacementTilePreview[] = [];
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const left = startX + col * BUILD_PREVIEW_TILE_SIZE;
+        const top = startY + row * BUILD_PREVIEW_TILE_SIZE;
+        const tileWidth = Math.min(BUILD_PREVIEW_TILE_SIZE, startX + width - left);
+        const tileHeight = Math.min(BUILD_PREVIEW_TILE_SIZE, startY + height - top);
+        tiles.push({ left, top, width: tileWidth, height: tileHeight, valid: true });
+      }
     }
+
+    let reason: string | null = null;
+    let placementValid = true;
+    const applyIssue = (
+      triggered: boolean,
+      text: string,
+      predicate?: (tile: PlacementTilePreview) => boolean
+    ) => {
+      if (!triggered) {
+        return;
+      }
+      placementValid = false;
+      if (!reason) {
+        reason = text;
+      }
+      if (!predicate) {
+        for (const tile of tiles) {
+          tile.valid = false;
+        }
+        return;
+      }
+      let marked = false;
+      for (const tile of tiles) {
+        if (predicate(tile)) {
+          tile.valid = false;
+          marked = true;
+        }
+      }
+      if (!marked) {
+        for (const tile of tiles) {
+          tile.valid = false;
+        }
+      }
+    };
+
+    const buildingLeft = startX;
+    const buildingTop = startY;
+    const buildingRight = startX + width;
+    const buildingBottom = startY + height;
+
+    const boundsIssue =
+      buildingLeft < 0 || buildingTop < 0 || buildingRight > WIDTH || buildingBottom > HEIGHT;
+    applyIssue(boundsIssue, 'Must build within the valley bounds.', (tile) => {
+      const tileRight = tile.left + tile.width;
+      const tileBottom = tile.top + tile.height;
+      return tile.left < 0 || tile.top < 0 || tileRight > WIDTH || tileBottom > HEIGHT;
+    });
 
     const castleHalf = CASTLE_SIZE / 2 + BUILDING_CONSTRUCTION_RADIUS;
-    if (
-      Math.abs(position.x - CASTLE_POS.x) <= castleHalf + halfWidth &&
-      Math.abs(position.y - CASTLE_POS.y) <= castleHalf + halfHeight
-    ) {
-      return false;
-    }
+    const castleLeft = CASTLE_POS.x - castleHalf;
+    const castleTop = CASTLE_POS.y - castleHalf;
+    const castleRight = CASTLE_POS.x + castleHalf;
+    const castleBottom = CASTLE_POS.y + castleHalf;
+    const castleOverlap = rectanglesOverlap(
+      buildingLeft,
+      buildingTop,
+      buildingRight,
+      buildingBottom,
+      castleLeft,
+      castleTop,
+      castleRight,
+      castleBottom
+    );
+    applyIssue(castleOverlap, 'Too close to the castle grounds.', (tile) => {
+      const tileRight = tile.left + tile.width;
+      const tileBottom = tile.top + tile.height;
+      return rectanglesOverlap(tile.left, tile.top, tileRight, tileBottom, castleLeft, castleTop, castleRight, castleBottom);
+    });
 
+    const maxHalf = Math.max(halfWidth, halfHeight);
     for (const seal of this.seals) {
-      if (seal.pos.distanceTo(position) <= SEAL_CHANNEL_RADIUS + Math.max(halfWidth, halfHeight)) {
-        return false;
-      }
+      const limit = SEAL_CHANNEL_RADIUS + maxHalf;
+      const tooClose = seal.pos.distanceTo(position) <= limit;
+      applyIssue(tooClose, 'Interferes with a seal ritual.', (tile) => {
+        const tileRight = tile.left + tile.width;
+        const tileBottom = tile.top + tile.height;
+        return rectangleCircleOverlap(
+          tile.left,
+          tile.top,
+          tileRight,
+          tileBottom,
+          seal.pos.x,
+          seal.pos.y,
+          SEAL_CHANNEL_RADIUS
+        );
+      });
     }
 
     for (const hut of this.world.getHuts()) {
       const hutHalfW = hut.width / 2;
       const hutHalfH = hut.height / 2;
-      if (
-        Math.abs(position.x - hut.center.x) <= halfWidth + hutHalfW &&
-        Math.abs(position.y - hut.center.y) <= halfHeight + hutHalfH
-      ) {
-        return false;
-      }
+      const hutLeft = hut.center.x - hutHalfW;
+      const hutTop = hut.center.y - hutHalfH;
+      const hutRight = hut.center.x + hutHalfW;
+      const hutBottom = hut.center.y + hutHalfH;
+      const overlap = rectanglesOverlap(
+        buildingLeft,
+        buildingTop,
+        buildingRight,
+        buildingBottom,
+        hutLeft,
+        hutTop,
+        hutRight,
+        hutBottom
+      );
+      applyIssue(overlap, 'Cannot block village huts.', (tile) => {
+        const tileRight = tile.left + tile.width;
+        const tileBottom = tile.top + tile.height;
+        return rectanglesOverlap(tile.left, tile.top, tileRight, tileBottom, hutLeft, hutTop, hutRight, hutBottom);
+      });
     }
 
-    const treeThreshold = Math.max(halfWidth, halfHeight) + 6;
-    let denseCount = 0;
+    const treeThreshold = maxHalf + 6;
+    const denseTrees: { position: Vector2; radius: number }[] = [];
     for (const tree of this.world.getTrees()) {
-      const dx = Math.abs(position.x - tree.position.x);
-      const dy = Math.abs(position.y - tree.position.y);
-      if (dx <= halfWidth + tree.radius && dy <= halfHeight + tree.radius) {
-        return false;
-      }
+      const overlap = rectangleCircleOverlap(
+        buildingLeft,
+        buildingTop,
+        buildingRight,
+        buildingBottom,
+        tree.position.x,
+        tree.position.y,
+        tree.radius
+      );
+      applyIssue(overlap, 'Blocked by a tree.', (tile) => {
+        const tileRight = tile.left + tile.width;
+        const tileBottom = tile.top + tile.height;
+        return rectangleCircleOverlap(
+          tile.left,
+          tile.top,
+          tileRight,
+          tileBottom,
+          tree.position.x,
+          tree.position.y,
+          tree.radius
+        );
+      });
       if (tree.position.distanceTo(position) <= tree.radius + treeThreshold) {
-        denseCount += 1;
+        denseTrees.push({ position: tree.position.clone(), radius: tree.radius });
       }
-    }
-    if (denseCount >= 3) {
-      return false;
     }
 
-    const selfRadius = Math.max(halfWidth, halfHeight);
+    if (denseTrees.length >= 3) {
+      applyIssue(true, 'Too many trees crowd this site.', (tile) => {
+        const tileRight = tile.left + tile.width;
+        const tileBottom = tile.top + tile.height;
+        return denseTrees.some((tree) =>
+          rectangleCircleOverlap(
+            tile.left,
+            tile.top,
+            tileRight,
+            tileBottom,
+            tree.position.x,
+            tree.position.y,
+            tree.radius + treeThreshold
+          )
+        );
+      });
+    }
+
+    const selfRadius = maxHalf;
     for (const building of this.buildings) {
       const otherSize = getBuildingHalfSize(building.type);
-      const dx = Math.abs(position.x - building.position.x);
-      const dy = Math.abs(position.y - building.position.y);
-      if (dx <= halfWidth + otherSize.halfWidth && dy <= halfHeight + otherSize.halfHeight) {
-        return false;
-      }
+      const otherLeft = building.position.x - otherSize.halfWidth;
+      const otherTop = building.position.y - otherSize.halfHeight;
+      const otherRight = building.position.x + otherSize.halfWidth;
+      const otherBottom = building.position.y + otherSize.halfHeight;
+      const overlap = rectanglesOverlap(
+        buildingLeft,
+        buildingTop,
+        buildingRight,
+        buildingBottom,
+        otherLeft,
+        otherTop,
+        otherRight,
+        otherBottom
+      );
+      applyIssue(overlap, 'Overlaps with another structure.', (tile) => {
+        const tileRight = tile.left + tile.width;
+        const tileBottom = tile.top + tile.height;
+        return rectanglesOverlap(tile.left, tile.top, tileRight, tileBottom, otherLeft, otherTop, otherRight, otherBottom);
+      });
       const distance = position.distanceTo(building.position);
       const otherRadius = Math.max(otherSize.halfWidth, otherSize.halfHeight);
-      if (distance < selfRadius + otherRadius + BUILDING_MIN_SPACING) {
-        return false;
-      }
+      const spacingIssue = distance < selfRadius + otherRadius + BUILDING_MIN_SPACING;
+      applyIssue(spacingIssue, 'Needs more space from nearby structures.', () => true);
     }
 
-    return true;
+    return {
+      valid: placementValid,
+      reason,
+      tiles
+    };
   }
 
   private _drawOverlay(ctx: CanvasRenderingContext2D, text: string, color: string, subtitle: string): void {
