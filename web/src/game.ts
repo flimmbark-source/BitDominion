@@ -197,6 +197,27 @@ interface DarkProjectile {
   sourceUnitId: number;
 }
 
+interface HitFlash {
+  id: number;
+  position: Vector2;
+  radius: number;
+  age: number;
+  duration: number;
+  strong: boolean;
+}
+
+interface DamageNumber {
+  id: number;
+  position: Vector2;
+  velocity: Vector2;
+  text: string;
+  amount: number;
+  age: number;
+  duration: number;
+  color: string;
+  emphasis: boolean;
+}
+
 type GamePhase = 'downtime' | 'wave';
 type QuestType = 'escort' | 'retrieve';
 
@@ -472,6 +493,10 @@ export class Game {
   private weaponOrbitVisuals: { position: Vector2; radius: number; alpha: number }[] = [];
   private smokeFields: SmokeField[] = [];
   private smokeFieldIdCounter = 1;
+  private hitFlashes: HitFlash[] = [];
+  private damageNumbers: DamageNumber[] = [];
+  private hitFlashIdCounter = 1;
+  private damageNumberIdCounter = 1;
   private unitLookup: Map<number, DarkUnit> = new Map();
   private unitIdCounter = 1;
   private totalKills = 0;
@@ -548,6 +573,10 @@ export class Game {
     this.weaponOrbitVisuals = [];
     this.smokeFields = [];
     this.smokeFieldIdCounter = 1;
+    this.hitFlashes = [];
+    this.damageNumbers = [];
+    this.hitFlashIdCounter = 1;
+    this.damageNumberIdCounter = 1;
     this.unitLookup.clear();
     this.unitIdCounter = 1;
     this.totalKills = 0;
@@ -1182,6 +1211,8 @@ export class Game {
     }
     this._syncWorldObstacles();
     if (this.state !== 'running') {
+      this._updateHitFlashes(dt);
+      this._updateDamageNumbers(dt);
       this._updateShield(dt);
       this.world.update(dt, {
         knight: this.knight,
@@ -1216,6 +1247,8 @@ export class Game {
     this._updateDarkProjectiles(dt);
     this._updateKnightProjectiles(dt);
     this._updateSmokeFields(dt);
+    this._updateHitFlashes(dt);
+    this._updateDamageNumbers(dt);
 
     this.world.update(dt, {
       knight: this.knight,
@@ -1236,7 +1269,13 @@ export class Game {
         let kills = 0;
         for (const unit of hits) {
           const wasAlive = unit.alive;
+          const preHp = unit.hp;
           const died = unit.receiveArcHit(this.knight, meleeDamage);
+          const damageDealt = Math.max(0, preHp - unit.hp);
+          if (damageDealt > 0) {
+            this._spawnHitFlash(unit.pos, unit.getCollisionRadius(), { strong: !unit.alive });
+            this._spawnDamageNumber(unit.pos, damageDealt, { emphasis: !unit.alive });
+          }
           if (wasAlive && died) {
             kills += 1;
             this._onUnitKilled(unit);
@@ -1296,6 +1335,8 @@ export class Game {
 
     this.knight.draw(ctx);
     this.knight.drawSwing(ctx);
+    this._drawHitFlashes(ctx);
+    this._drawDamageNumbers(ctx);
 
     this.world.drawCanopy(ctx);
     this.world.drawVillageAlarms(ctx);
@@ -2135,7 +2176,16 @@ export class Game {
         continue;
       }
       if (unit.pos.distanceTo(this.knight.pos) <= radius + unit.getCollisionRadius()) {
+        const preHp = unit.hp;
         unit.takeDamage(baseDamage);
+        const damageDealt = Math.max(0, preHp - unit.hp);
+        if (damageDealt > 0) {
+          this._spawnHitFlash(unit.pos, unit.getCollisionRadius(), { strong: !unit.alive });
+          this._spawnDamageNumber(unit.pos, damageDealt, {
+            emphasis: state.evolved || !unit.alive,
+            color: state.evolved ? '#FFB86C' : '#FFD37A'
+          });
+        }
         if (!unit.alive) {
           this._onUnitKilled(unit);
         } else if (state.evolved) {
@@ -3244,7 +3294,16 @@ export class Game {
 
   private _applyProjectileHit(projectile: KnightProjectile, unit: DarkUnit): void {
     const wasAlive = unit.alive;
+    const preHp = unit.hp;
     unit.takeDamage(projectile.damage);
+    const damageDealt = Math.max(0, preHp - unit.hp);
+    if (damageDealt > 0) {
+      this._spawnHitFlash(unit.pos, unit.getCollisionRadius(), { strong: !unit.alive });
+      this._spawnDamageNumber(unit.pos, damageDealt, {
+        emphasis: !unit.alive || projectile.damage >= 5,
+        color: projectile.tint
+      });
+    }
     if (projectile.effects?.dot) {
       unit.applyDot(projectile.effects.dot.dps, projectile.effects.dot.duration);
     }
@@ -3432,6 +3491,141 @@ export class Game {
       ctx.fill();
     }
     ctx.restore();
+  }
+
+  private _updateHitFlashes(dt: number): void {
+    if (!this.hitFlashes.length) {
+      return;
+    }
+    for (const flash of this.hitFlashes) {
+      flash.age += dt;
+    }
+    this.hitFlashes = this.hitFlashes.filter((flash) => flash.age < flash.duration);
+  }
+
+  private _updateDamageNumbers(dt: number): void {
+    if (!this.damageNumbers.length) {
+      return;
+    }
+    for (const number of this.damageNumbers) {
+      number.age += dt;
+      number.position.x += number.velocity.x * dt;
+      number.position.y += number.velocity.y * dt;
+      number.velocity.x *= 0.92;
+      number.velocity.y = number.velocity.y * 0.9 + 14 * dt;
+    }
+    this.damageNumbers = this.damageNumbers.filter((number) => number.age < number.duration);
+  }
+
+  private _spawnHitFlash(position: Vector2, radius: number, options: { strong?: boolean } = {}): void {
+    const strong = options.strong ?? false;
+    const flash: HitFlash = {
+      id: this.hitFlashIdCounter++,
+      position: position.clone(),
+      radius: Math.max(14, radius * (strong ? 1.5 : 1.2)),
+      age: 0,
+      duration: strong ? 0.3 : 0.2,
+      strong
+    };
+    this.hitFlashes.push(flash);
+  }
+
+  private _spawnDamageNumber(
+    position: Vector2,
+    amount: number,
+    options: { color?: string; emphasis?: boolean } = {}
+  ): void {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return;
+    }
+    const emphasis = options.emphasis ?? amount >= 5;
+    const color = options.color ?? (emphasis ? '#FFE08A' : '#F6E7C2');
+    const entry: DamageNumber = {
+      id: this.damageNumberIdCounter++,
+      position: position.clone(),
+      velocity: new Vector2((Math.random() - 0.5) * 22, -46 - Math.random() * 14),
+      text: this._formatDamage(amount),
+      amount,
+      age: 0,
+      duration: emphasis ? 0.95 : 0.75,
+      color,
+      emphasis
+    };
+    this.damageNumbers.push(entry);
+  }
+
+  private _drawHitFlashes(ctx: CanvasRenderingContext2D): void {
+    if (!this.hitFlashes.length) {
+      return;
+    }
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const flash of this.hitFlashes) {
+      const progress = flash.duration > 0 ? flash.age / flash.duration : 1;
+      const clamped = Math.max(0, Math.min(1, progress));
+      const alpha = (flash.strong ? 0.7 : 0.5) * (1 - clamped);
+      if (alpha <= 0) {
+        continue;
+      }
+      const radius = flash.radius * (0.8 + 0.3 * clamped);
+      const gradient = ctx.createRadialGradient(
+        flash.position.x,
+        flash.position.y,
+        Math.max(1, radius * 0.15),
+        flash.position.x,
+        flash.position.y,
+        radius
+      );
+      gradient.addColorStop(0, `rgba(255, 255, 230, ${(alpha * 1.1).toFixed(3)})`);
+      gradient.addColorStop(0.45, `rgba(255, 210, 140, ${(alpha * 0.7).toFixed(3)})`);
+      gradient.addColorStop(1, 'rgba(255, 140, 80, 0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(flash.position.x, flash.position.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  private _drawDamageNumbers(ctx: CanvasRenderingContext2D): void {
+    if (!this.damageNumbers.length) {
+      return;
+    }
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const number of this.damageNumbers) {
+      const progress = number.duration > 0 ? number.age / number.duration : 1;
+      const clamped = Math.max(0, Math.min(1, progress));
+      const alpha = 1 - clamped;
+      if (alpha <= 0) {
+        continue;
+      }
+      const scale = number.emphasis ? 1.1 + 0.2 * (1 - clamped) : 1 + 0.12 * (1 - clamped);
+      ctx.save();
+      ctx.translate(number.position.x, number.position.y);
+      ctx.scale(scale, scale);
+      ctx.globalAlpha = alpha;
+      ctx.font = `${number.emphasis ? '700' : '600'} 12px "Inter", sans-serif`;
+      ctx.strokeStyle = 'rgba(17, 24, 39, 0.55)';
+      ctx.lineWidth = 2.2 / scale;
+      ctx.strokeText(number.text, 0, 0);
+      ctx.fillStyle = number.color;
+      ctx.fillText(number.text, 0, 0);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  private _formatDamage(amount: number): string {
+    const rounded = Math.round(amount);
+    if (Math.abs(amount - rounded) < 0.01) {
+      return `${rounded}`;
+    }
+    if (amount >= 1) {
+      return amount.toFixed(1).replace(/\.0$/, '');
+    }
+    return amount.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
   }
 
   private _updateWatchtower(

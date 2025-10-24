@@ -96,6 +96,8 @@ export class DarkUnit {
   private lairCenter: Vector2 | null = null;
   private lairRadius = MONSTER_LAIR_RADIUS;
   private facingAngle = Math.random() * Math.PI * 2;
+  private hurtFlashTimer = 0;
+  private hurtFlashDuration = 0.22;
 
   constructor(
     public pos: Vector2,
@@ -125,6 +127,9 @@ export class DarkUnit {
     }
 
     const dtRatio = dt * FPS;
+    if (this.hurtFlashTimer > 0) {
+      this.hurtFlashTimer = Math.max(0, this.hurtFlashTimer - dt);
+    }
     const stats = UNIT_STATS[this.type];
     const isDark = this.allegiance === 'dark';
     const isWild = this.allegiance === 'wild';
@@ -382,7 +387,11 @@ export class DarkUnit {
   }
 
   takeDamage(amount: number): void {
+    if (amount <= 0) {
+      return;
+    }
     this.hp = Math.max(0, this.hp - amount);
+    this.hurtFlashTimer = this.hurtFlashDuration;
     if (this.hp === 0) {
       this.alive = false;
     }
@@ -399,17 +408,30 @@ export class DarkUnit {
       ? mixColors(blended, '#FFFFFF', Math.min(0.5, this.detectionTint * 0.6))
       : blended;
     let fill = fillBase;
+    const hurtRatio = this.hurtFlashDuration > 0 ? this.hurtFlashTimer / this.hurtFlashDuration : 0;
+    if (hurtRatio > 0) {
+      fill = mixColors(fill, '#FFFFFF', Math.min(0.9, 0.65 + hurtRatio * 0.5));
+    }
     if (this.attackVisualTimer > 0 && this.attackVisualDuration > 0) {
       const completion = 1 - this.attackVisualTimer / this.attackVisualDuration;
       const flashStrength = Math.max(0, Math.min(1, 0.6 * (1 - completion)));
       fill = mixColors(fillBase, '#FFFFFF', flashStrength);
     }
-    const accent = mixColors(appearance.accent, '#FFFFFF', Math.min(0.35, this.detectionTint * 0.4));
-    const detail = mixColors(appearance.detail, '#FFFFFF', Math.min(0.25, this.detectionTint * 0.3));
+    const accentBase = mixColors(appearance.accent, '#FFFFFF', Math.min(0.35, this.detectionTint * 0.4));
+    const detailBase = mixColors(appearance.detail, '#FFFFFF', Math.min(0.25, this.detectionTint * 0.3));
+    const accent = hurtRatio > 0 ? mixColors(accentBase, '#FFEED0', Math.min(0.8, hurtRatio * 0.9)) : accentBase;
+    const detail = hurtRatio > 0 ? mixColors(detailBase, '#FFF7E8', Math.min(0.7, hurtRatio * 0.8)) : detailBase;
 
     ctx.save();
     ctx.translate(this.pos.x, this.pos.y);
     ctx.rotate(this.facingAngle);
+
+    if (hurtRatio > 0) {
+      ctx.shadowColor = `rgba(255, 206, 120, ${0.45 * hurtRatio})`;
+      ctx.shadowBlur = 12 * hurtRatio;
+    } else {
+      ctx.shadowBlur = 0;
+    }
 
     switch (this.type) {
       case 'scout': {
