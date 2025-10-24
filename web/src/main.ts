@@ -299,38 +299,48 @@ appRootElement.innerHTML = `
         </p>
       </div>
       <div class="hud">
-        <div class="ui-panel stats-panel">
-          <div class="stat-row">
-            <span class="stat-label gold">Gold</span>
-            <span class="stat-value" id="heroGoldText">0</span>
-            <span class="resource-gain" id="heroGoldGain" aria-live="polite"></span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label shards">Relic Shards</span>
-            <span class="stat-value" id="heroShardText">0</span>
-            <span class="resource-gain" id="heroShardGain" aria-live="polite"></span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label health">Health</span>
-            <div class="health-bar">
-              <div class="health-bar-fill" id="heroHealthBar"></div>
+        <div class="hud-bottom-row">
+          <div class="hud-section hud-section--left">
+            <div class="ui-panel stats-panel">
+              <div class="stat-row">
+                <span class="stat-label gold">Gold</span>
+                <span class="stat-value" id="heroGoldText">0</span>
+                <span class="resource-gain" id="heroGoldGain" aria-live="polite"></span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label shards">Relic Shards</span>
+                <span class="stat-value" id="heroShardText">0</span>
+                <span class="resource-gain" id="heroShardGain" aria-live="polite"></span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label health">Health</span>
+                <div class="health-bar">
+                  <div class="health-bar-fill" id="heroHealthBar"></div>
+                </div>
+                <span class="health-text" id="heroHealthText">${KNIGHT_HP}/${KNIGHT_HP}</span>
+              </div>
+              <div class="hud-info-buttons" role="group" aria-label="Gameplay tips">
+                <button class="info-button" id="mapControlsInfo" type="button" aria-label="Map controls help">?</button>
+                <button class="info-button" id="noiseInfo" type="button" aria-label="Noise and suspicion help">?</button>
+              </div>
             </div>
-            <span class="health-text" id="heroHealthText">${KNIGHT_HP}/${KNIGHT_HP}</span>
           </div>
-        </div>
-        <div class="hud-info-buttons" role="group" aria-label="Gameplay tips">
-          <button class="info-button" id="mapControlsInfo" type="button" aria-label="Map controls help">?</button>
-          <button class="info-button" id="noiseInfo" type="button" aria-label="Noise and suspicion help">?</button>
-        </div>
-        <button class="ui-panel build-toggle" id="buildPrompt" type="button">
-          <span class="build-toggle-icon" aria-hidden="true">🔨</span>
-          <span class="build-toggle-text">(B)uild</span>
-        </button>
-        <div class="build-feedback" id="buildErrorMessage" role="status" aria-live="polite"></div>
-        <div class="ui-panel inventory" id="inventoryPanel"></div>
-        <div class="ui-panel buffs-panel" id="buffsPanel">
-          <div class="buffs-title">Temporary Blessings</div>
-          <ul class="buffs-list" id="buffList"></ul>
+          <div class="hud-section hud-section--center">
+            <div class="hud-center-row">
+              <button class="ui-panel build-toggle" id="buildPrompt" type="button">
+                <span class="build-toggle-icon" aria-hidden="true">🔨</span>
+                <span class="build-toggle-text">(B)uild</span>
+              </button>
+              <div class="ui-panel inventory" id="inventoryPanel"></div>
+            </div>
+            <div class="build-feedback" id="buildErrorMessage" role="status" aria-live="polite"></div>
+          </div>
+          <div class="hud-section hud-section--right">
+            <div class="ui-panel buffs-panel" id="buffsPanel">
+              <div class="buffs-title">Temporary Blessings</div>
+              <ul class="buffs-list" id="buffList"></ul>
+            </div>
+          </div>
         </div>
       </div>
       <div class="shop-panel ui-panel hidden" id="buildingShopPanel">
@@ -1356,25 +1366,11 @@ function updateInventory() {
       iconElement.className = 'item-icon';
       iconElement.textContent = entry.icon;
       slot.appendChild(iconElement);
-
-      const info = document.createElement('div');
-      info.className = 'item-info';
-      slot.appendChild(info);
-
-      const name = document.createElement('div');
-      name.className = 'item-name';
-      name.textContent = entry.name;
-      info.appendChild(name);
-
-      const progressText = document.createElement('div');
-      progressText.className = 'item-progress-text';
-      progressText.textContent = progressLabel;
       const readyToEvolve = !!entry.progress?.ready && !entry.evolved;
-      progressText.classList.toggle('ready', readyToEvolve);
-      info.appendChild(progressText);
 
       slot.dataset.itemId = entry.id;
       slot.title = `${entry.name} — ${progressLabel}`;
+      slot.setAttribute('aria-label', `${entry.name} — ${progressLabel}`);
       slot.classList.toggle('evolution-ready', readyToEvolve);
       const wasReady = evolutionReadyState.get(entry.id) ?? false;
       if (readyToEvolve && !wasReady) {
@@ -1421,6 +1417,7 @@ function updateInventory() {
       slot.classList.add('empty');
       slot.removeAttribute('data-item-id');
       slot.removeAttribute('title');
+      slot.removeAttribute('aria-label');
       slot.onmouseenter = null;
       slot.onmouseleave = null;
       slot.onclick = null;
