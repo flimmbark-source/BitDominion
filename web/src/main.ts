@@ -38,6 +38,174 @@ const BUILDING_DISPLAY: Record<BuildingType, { icon: string; name: string; descr
   }
 };
 
+type TutorialStepId = 'move' | 'workshop' | 'buildPlacement' | 'arsenal';
+
+interface TutorialStepDefinition {
+  readonly title: string;
+  readonly body: string;
+  readonly icon: string;
+  readonly keys?: readonly string[];
+}
+
+const TUTORIAL_STEPS: Record<TutorialStepId, TutorialStepDefinition> = {
+  move: {
+    title: 'Move the Knight',
+    body: 'Left-click anywhere on the map to send the knight toward that spot.',
+    icon: '🧭',
+    keys: ['Left Click']
+  },
+  workshop: {
+    title: 'Open the Workshop',
+    body: 'Press B or click the hammer button to open the Workshop ledger and choose a structure.',
+    icon: '🔨',
+    keys: ['B']
+  },
+  buildPlacement: {
+    title: 'Place a Structure',
+    body: 'Select a blueprint, then left-click to place its foundation. Right-click or press Esc to cancel build mode.',
+    icon: '🏗️',
+    keys: ['Left Click', 'Right Click', 'Esc']
+  },
+  arsenal: {
+    title: 'Check the Hero Arsenal',
+    body: 'Press I during downtime to open the Hero Arsenal and spend supplies on new gear.',
+    icon: '⚔️',
+    keys: ['I']
+  }
+};
+
+class TutorialManager {
+  private readonly completed = new Set<TutorialStepId>();
+  private queue: TutorialStepId[] = [];
+  private active: TutorialStepId | null = null;
+  private activeElement: HTMLDivElement | null = null;
+
+  constructor(private readonly layer: HTMLDivElement) {}
+
+  request(id: TutorialStepId, options?: { priority?: boolean }): void {
+    if (this.completed.has(id) || this.queue.includes(id) || this.active === id) {
+      return;
+    }
+    if (options?.priority) {
+      this.queue.unshift(id);
+    } else {
+      this.queue.push(id);
+    }
+    this.maybeShowNext();
+  }
+
+  complete(id: TutorialStepId): boolean {
+    if (this.completed.has(id)) {
+      return false;
+    }
+    this.completed.add(id);
+    this.queue = this.queue.filter((step) => step !== id);
+    if (this.active === id) {
+      this.removeActiveHint();
+    }
+    this.maybeShowNext();
+    return true;
+  }
+
+  isCompleted(id: TutorialStepId): boolean {
+    return this.completed.has(id);
+  }
+
+  private maybeShowNext(): void {
+    if (this.active) {
+      return;
+    }
+    while (this.queue.length) {
+      const next = this.queue.shift();
+      if (!next || this.completed.has(next)) {
+        continue;
+      }
+      this.showHint(next);
+      break;
+    }
+  }
+
+  private showHint(id: TutorialStepId): void {
+    const step = TUTORIAL_STEPS[id];
+    const card = document.createElement('div');
+    card.className = 'tutorial-hint-card';
+    card.dataset.step = id;
+
+    const header = document.createElement('div');
+    header.className = 'tutorial-hint-header';
+
+    const icon = document.createElement('div');
+    icon.className = 'tutorial-hint-icon';
+    icon.textContent = step.icon;
+    icon.setAttribute('aria-hidden', 'true');
+
+    const title = document.createElement('h2');
+    title.className = 'tutorial-hint-title';
+    title.textContent = step.title;
+
+    header.append(icon, title);
+
+    const body = document.createElement('p');
+    body.className = 'tutorial-hint-body';
+    body.textContent = step.body;
+
+    card.append(header, body);
+
+    if (step.keys && step.keys.length > 0) {
+      const keyRow = document.createElement('div');
+      keyRow.className = 'tutorial-hint-keys';
+      for (const key of step.keys) {
+        const keyTag = document.createElement('span');
+        keyTag.className = 'tutorial-hint-key';
+        keyTag.textContent = key;
+        keyRow.appendChild(keyTag);
+      }
+      card.appendChild(keyRow);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'tutorial-hint-actions';
+
+    const skipButton = document.createElement('button');
+    skipButton.type = 'button';
+    skipButton.className = 'tutorial-hint-skip';
+    skipButton.textContent = 'Skip Tutorial';
+    skipButton.addEventListener('click', () => {
+      this.skipAll();
+    });
+
+    const dismissButton = document.createElement('button');
+    dismissButton.type = 'button';
+    dismissButton.className = 'tutorial-hint-dismiss';
+    dismissButton.textContent = 'Got it';
+    dismissButton.addEventListener('click', () => {
+      this.complete(id);
+    });
+    actions.append(skipButton, dismissButton);
+    card.appendChild(actions);
+
+    this.layer.appendChild(card);
+    this.active = id;
+    this.activeElement = card;
+  }
+
+  private removeActiveHint(): void {
+    if (this.activeElement && this.activeElement.parentElement === this.layer) {
+      this.layer.removeChild(this.activeElement);
+    }
+    this.active = null;
+    this.activeElement = null;
+  }
+
+  private skipAll(): void {
+    (Object.keys(TUTORIAL_STEPS) as TutorialStepId[]).forEach((stepId) => {
+      this.completed.add(stepId);
+    });
+    this.queue = [];
+    this.removeActiveHint();
+  }
+}
+
 const INVENTORY_SLOTS = ITEM_ORDER.length + 1;
 const INITIAL_CAMERA_ZOOM = 1.6;
 const MIN_CAMERA_ZOOM = 0.75;
@@ -69,6 +237,18 @@ appRootElement.innerHTML = `
         <h2>Dark Energy</h2>
         <div class="bar"><div class="bar-fill" id="darkEnergyFill"></div></div>
         <p id="darkEnergyText">Gathering energy…</p>
+      </div>
+      <div class="lore-banner ui-panel" id="loreBanner">
+        <div class="lore-banner-header">
+          <h2>Emberwatch Briefing</h2>
+          <button class="lore-banner-dismiss" id="loreBannerDismiss" type="button" aria-label="Hide story intro">×</button>
+        </div>
+        <p>
+          Sir Rowan, last knight of Emberwatch, holds the breach as waves of dark energy spill from the Hollow Vale.
+        </p>
+        <p>
+          The tavern cellar shelters Mirella's roaming workshop—an artisan crew that brews supplies while you raise defenses for the night.
+        </p>
       </div>
       <div class="hud">
         <div class="ui-panel stats-panel">
@@ -173,6 +353,7 @@ appRootElement.innerHTML = `
           </div>
         </div>
       </div>
+      <div class="tutorial-hint-layer" id="tutorialHintLayer" aria-live="polite"></div>
     </div>
   </div>
 `;
@@ -350,6 +531,50 @@ const questDialogProgressFill = requireElement<HTMLDivElement>('#questDialogProg
 const questDialogPrimary = requireElement<HTMLButtonElement>('#questDialogPrimary');
 const questDialogSecondary = requireElement<HTMLButtonElement>('#questDialogSecondary');
 const questDialogCloseButton = requireElement<HTMLButtonElement>('#questDialogClose');
+const tutorialHintLayer = requireElement<HTMLDivElement>('#tutorialHintLayer');
+const loreBanner = requireElement<HTMLDivElement>('#loreBanner');
+const loreBannerDismissButton = requireElement<HTMLButtonElement>('#loreBannerDismiss');
+
+const LORE_BANNER_STORAGE_KEY = 'bitdominion.loreBannerDismissed';
+
+function hideLoreBanner(persist: boolean): void {
+  loreBanner.classList.add('hidden');
+  loreBanner.setAttribute('aria-hidden', 'true');
+  if (!persist) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(LORE_BANNER_STORAGE_KEY, 'true');
+  } catch (error) {
+    console.warn('Unable to persist lore banner dismissal', error);
+  }
+}
+
+function showLoreBanner(): void {
+  loreBanner.classList.remove('hidden');
+  loreBanner.setAttribute('aria-hidden', 'false');
+}
+
+let loreBannerDismissed = false;
+try {
+  loreBannerDismissed = window.localStorage.getItem(LORE_BANNER_STORAGE_KEY) === 'true';
+} catch (error) {
+  console.warn('Unable to read lore banner dismissal state', error);
+}
+
+if (loreBannerDismissed) {
+  hideLoreBanner(false);
+} else {
+  showLoreBanner();
+}
+
+loreBannerDismissButton.addEventListener('click', () => {
+  hideLoreBanner(true);
+});
+
+const tutorialManager = new TutorialManager(tutorialHintLayer);
+tutorialManager.request('move');
+tutorialManager.request('workshop');
 
 let lastSupplies = game.getSupplies();
 let lastRelicShards = game.getRelicShards();
@@ -693,6 +918,10 @@ function openBuildLedger(): void {
   if (!isBuildLedgerOpen) {
     isBuildLedgerOpen = true;
   }
+  tutorialManager.complete('workshop');
+  if (!tutorialManager.isCompleted('buildPlacement')) {
+    tutorialManager.request('buildPlacement', { priority: true });
+  }
   updateBuildingShopButtons();
 }
 
@@ -725,6 +954,9 @@ function setItemShopOpen(open: boolean): void {
     return;
   }
   isItemShopOpen = nextState;
+  if (isItemShopOpen) {
+    tutorialManager.complete('arsenal');
+  }
   if (isItemShopOpen && game.isBuildModeActive()) {
     disableBuildMode();
   }
@@ -1182,7 +1414,18 @@ canvas.addEventListener('pointerdown', (event) => {
   if (event.button === 2) {
     event.preventDefault();
   }
+  const buildingCountBefore = game.getBuildings().length;
+  const wasBuildModeActive = game.isBuildModeActive();
   game.onPointerDown(x, y, event.button, event.timeStamp / 1000);
+  const buildingCountAfter = game.getBuildings().length;
+  if (event.button === 0 && !wasBuildModeActive) {
+    tutorialManager.complete('move');
+  }
+  if (buildingCountAfter > buildingCountBefore) {
+    if (tutorialManager.complete('buildPlacement')) {
+      tutorialManager.request('arsenal');
+    }
+  }
 });
 
 canvas.addEventListener('pointermove', (event) => {
