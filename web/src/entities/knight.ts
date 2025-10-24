@@ -195,66 +195,77 @@ export class Knight {
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
-    const bodyRadius = KNIGHT_SIZE * 0.45;
-    const headRadius = KNIGHT_SIZE * 0.22;
+    const spriteScale = 1.12;
+    const bodyRadius = KNIGHT_SIZE * 0.45 * spriteScale;
+    const headRadius = KNIGHT_SIZE * 0.22 * spriteScale;
 
     ctx.save();
     ctx.translate(this.pos.x, this.pos.y);
 
-    ctx.fillStyle = '#0C5B25';
+    ctx.shadowColor = 'rgba(250, 220, 120, 0.65)';
+    ctx.shadowBlur = 18 * spriteScale;
+
+    ctx.fillStyle = '#1C1C24';
     ctx.beginPath();
-    ctx.moveTo(-bodyRadius * 0.9, 0);
-    ctx.quadraticCurveTo(-bodyRadius * 1.1, bodyRadius * 0.6, -bodyRadius * 0.3, bodyRadius * 1.25);
-    ctx.lineTo(bodyRadius * 0.3, bodyRadius * 1.25);
-    ctx.quadraticCurveTo(bodyRadius * 1.1, bodyRadius * 0.6, bodyRadius * 0.9, 0);
+    ctx.arc(0, 0, bodyRadius * 1.15, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#3A7BFA';
+    ctx.beginPath();
+    ctx.moveTo(-bodyRadius * 0.95, 0);
+    ctx.quadraticCurveTo(-bodyRadius * 0.6, bodyRadius * 1.2, -bodyRadius * 0.15, bodyRadius * 1.25);
+    ctx.lineTo(bodyRadius * 0.4, bodyRadius * 1.25);
+    ctx.quadraticCurveTo(bodyRadius * 0.95, bodyRadius * 0.7, bodyRadius * 0.85, -bodyRadius * 0.1);
     ctx.closePath();
     ctx.fill();
 
-    ctx.fillStyle = '#166F33';
+    ctx.fillStyle = '#6EA7FF';
     ctx.beginPath();
     ctx.arc(0, 0, bodyRadius, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = '#08391A';
+    ctx.lineWidth = 3.6 * spriteScale;
+    ctx.strokeStyle = '#F5F5F7';
     ctx.stroke();
 
-    ctx.fillStyle = '#21C35A';
+    ctx.fillStyle = '#5E2B91';
     ctx.beginPath();
-    ctx.arc(0, -bodyRadius * 0.2, bodyRadius * 0.55, Math.PI * 0.15, Math.PI * 0.85);
-    ctx.lineTo(0, bodyRadius * 0.7);
+    ctx.arc(-bodyRadius * 0.2, -bodyRadius * 0.1, bodyRadius * 0.65, Math.PI * 0.2, Math.PI * 1.05);
+    ctx.lineTo(-bodyRadius * 0.05, bodyRadius * 0.85);
     ctx.closePath();
     ctx.fill();
 
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#0E4C24';
+    ctx.lineWidth = 2.2 * spriteScale;
+    ctx.strokeStyle = '#F7E36C';
     ctx.beginPath();
-    ctx.moveTo(-bodyRadius * 0.65, 0);
-    ctx.lineTo(bodyRadius * 0.65, 0);
+    ctx.moveTo(-bodyRadius * 0.55, -bodyRadius * 0.05);
+    ctx.lineTo(bodyRadius * 0.65, -bodyRadius * 0.05);
     ctx.stroke();
 
-    ctx.fillStyle = '#E3E3E3';
+    ctx.fillStyle = '#F0F3FF';
     ctx.beginPath();
-    ctx.arc(0, -bodyRadius * 0.9, headRadius, 0, Math.PI * 2);
+    ctx.arc(0, -bodyRadius * 0.95, headRadius * 1.05, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#8F8F8F';
-    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = '#4B5678';
+    ctx.lineWidth = 1.8 * spriteScale;
     ctx.stroke();
 
-    ctx.fillStyle = '#2B4D96';
+    ctx.fillStyle = '#2B9B4B';
     ctx.beginPath();
-    ctx.moveTo(-bodyRadius * 0.3, -bodyRadius * 0.2);
-    ctx.lineTo(bodyRadius * 0.6, -bodyRadius * 0.4);
-    ctx.lineTo(bodyRadius * 0.55, bodyRadius * 0.4);
+    ctx.moveTo(-bodyRadius * 0.25, -bodyRadius * 0.25);
+    ctx.lineTo(bodyRadius * 0.7, -bodyRadius * 0.4);
+    ctx.lineTo(bodyRadius * 0.55, bodyRadius * 0.45);
     ctx.closePath();
     ctx.fill();
 
-    ctx.fillStyle = '#F1CE62';
+    ctx.fillStyle = '#F9C74F';
     ctx.beginPath();
-    ctx.arc(bodyRadius * 0.3, -bodyRadius * 0.2, bodyRadius * 0.24, 0, Math.PI * 2);
+    ctx.arc(bodyRadius * 0.45, -bodyRadius * 0.2, bodyRadius * 0.26, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#A67C21';
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = '#AA6400';
+    ctx.lineWidth = 1.6 * spriteScale;
     ctx.stroke();
 
     ctx.restore();
