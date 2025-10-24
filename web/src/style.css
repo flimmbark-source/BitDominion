@@ -112,6 +112,61 @@ body {
   color: #d1d5db;
 }
 
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.panel-heading h2 {
+  margin: 0;
+}
+
+.info-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  background: rgba(17, 24, 39, 0.75);
+  color: #fef3c7;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+
+.info-button:hover,
+.info-button:focus-visible {
+  background: rgba(251, 191, 36, 0.2);
+  border-color: rgba(251, 191, 36, 0.85);
+  color: #fef3c7;
+}
+
+.info-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.35);
+}
+
+.hud-info-buttons {
+  margin: 12px 0;
+  display: flex;
+  gap: 8px;
+}
+
+.hud-info-buttons .info-button {
+  width: 32px;
+  height: 32px;
+}
+
 .lore-banner {
   position: absolute;
   left: 16px;

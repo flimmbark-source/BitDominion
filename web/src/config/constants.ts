@@ -22,6 +22,7 @@ export const TAVERN_BASE_COLOR = '#78350f';
 export const TAVERN_ROOF_COLOR = '#b45309';
 export const TAVERN_DOOR_COLOR = '#fbbf24';
 export const TAVERN_OUTLINE_COLOR = '#431407';
+export const TAVERN_HEAL_PER_SECOND = 2.5;
 
 export const SHIELD_RING_RADIUS = CASTLE_SIZE / 2 + 30;
 export const SHIELD_RING_WIDTH = 6;

@@ -111,7 +111,8 @@ import {
   CLOAK_FIELD_DURATION,
   CLOAK_FIELD_CLOAK_TIME,
   ENEMY_PROJECTILE_RADIUS,
-  VILLAGER_SPEED
+  VILLAGER_SPEED,
+  TAVERN_HEAL_PER_SECOND
 } from './config/constants';
 import { DarkLordAI } from './ai/darkLordAI';
 import { DarkUnit, DarkUnitAllegiance } from './entities/darkUnit';
@@ -533,6 +534,7 @@ export class Game {
   private waveRallyPoint: Vector2 | null = null;
   private knightInTavern = false;
   private nearbyCreepCampIds: Set<number> = new Set();
+  private noiseListener: ((strength: number) => void) | null = null;
 
   constructor() {
     this.world = new World();
@@ -994,6 +996,10 @@ export class Game {
     return this.waveIndex;
   }
 
+  getTotalKills(): number {
+    return this.totalKills;
+  }
+
   getWaveRallyPoint(): Vector2 | null {
     return this.waveRallyPoint ? this.waveRallyPoint.clone() : null;
   }
@@ -1304,6 +1310,7 @@ export class Game {
     this._updateSupplies(dt);
     this.knight.update(dt, this.world);
     this._updateTavernState();
+    this._applyTavernHealing(dt);
     this._applyBarricadeSlowdown();
     this._updateSeals(dt);
     this._updateShield(dt);
@@ -1489,6 +1496,20 @@ export class Game {
   private _updateTavernState(): void {
     const tavern = this.world.getTavern();
     this.knightInTavern = this.knight.pos.distanceTo(tavern.position) <= tavern.interactRadius;
+  }
+
+  private _applyTavernHealing(dt: number): void {
+    if (!this.knightInTavern || this.phase !== 'downtime') {
+      return;
+    }
+    if (this.knight.hp >= KNIGHT_HP) {
+      return;
+    }
+    const healAmount = Math.max(0, TAVERN_HEAL_PER_SECOND * dt);
+    if (healAmount <= 0) {
+      return;
+    }
+    this.knight.hp = Math.min(KNIGHT_HP, this.knight.hp + healAmount);
   }
 
   private _generateDowntimeActivities(): void {
@@ -2478,10 +2499,17 @@ export class Game {
     for (const unit of this.units) {
       unit.notifyNoise(source);
     }
+    if (this.noiseListener) {
+      this.noiseListener(strength);
+    }
   }
 
   emitNoise(position: Vector2, strength: number): void {
     this._emitNoise(position, strength);
+  }
+
+  setNoiseListener(listener: ((strength: number) => void) | null): void {
+    this.noiseListener = listener ?? null;
   }
 
   private _updateNoise(dt: number): void {
