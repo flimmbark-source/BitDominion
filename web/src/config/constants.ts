@@ -67,10 +67,25 @@ export const CASTLE_EDGE_SPAWN_RADIUS = 40;
 export const TANK_CHASE_PERSIST_DISTANCE = 120;
 export const TANK_KNOCKBACK_STRENGTH = 1.3;
 
-export const UNIT_COLORS = {
-  scout: { base: '#C82828', alert: '#FF5A5A' },
-  tank: { base: '#823E28', alert: '#C85A3C' },
-  priest: { base: '#7A2BC8', alert: '#B58CFF' }
+export const UNIT_APPEARANCE = {
+  scout: {
+    base: '#C7364D',
+    alert: '#FF7A84',
+    accent: '#FFD166',
+    detail: '#FFECD1'
+  },
+  tank: {
+    base: '#5B3A24',
+    alert: '#D38B41',
+    accent: '#F1B85B',
+    detail: '#F4E4C1'
+  },
+  priest: {
+    base: '#423F9C',
+    alert: '#B59CFF',
+    accent: '#7CD3FF',
+    detail: '#F1E8FF'
+  }
 } as const;
 
 export const UNIT_STATS = {

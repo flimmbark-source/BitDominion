@@ -16,7 +16,7 @@ import {
   BUILDING_ATTACK_NOISE,
   TANK_CHASE_PERSIST_DISTANCE,
   TANK_KNOCKBACK_STRENGTH,
-  UNIT_COLORS,
+  UNIT_APPEARANCE,
   UNIT_DETECTION_LERP,
   UNIT_STATS,
   UNIT_WANDER_INTERVAL,
@@ -95,6 +95,7 @@ export class DarkUnit {
   private dotEffects: DotEffect[] = [];
   private lairCenter: Vector2 | null = null;
   private lairRadius = MONSTER_LAIR_RADIUS;
+  private facingAngle = Math.random() * Math.PI * 2;
 
   constructor(
     public pos: Vector2,
@@ -245,6 +246,10 @@ export class DarkUnit {
       }
     }
 
+    if (this.velocity.lengthSq() > 0.0001) {
+      this.facingAngle = Math.atan2(this.velocity.y, this.velocity.x);
+    }
+
     if (this.attackCooldownTimer > 0) {
       this.attackCooldownTimer = Math.max(0, this.attackCooldownTimer - dt);
     }
@@ -387,9 +392,9 @@ export class DarkUnit {
     if (!this.alive) {
       return;
     }
-    const colors = UNIT_COLORS[this.type];
+    const appearance = UNIT_APPEARANCE[this.type];
     const half = this.getHalfSize();
-    const blended = mixColors(colors.base, colors.alert, this.detectionTint);
+    const blended = mixColors(appearance.base, appearance.alert, this.detectionTint);
     const fillBase = this.detecting
       ? mixColors(blended, '#FFFFFF', Math.min(0.5, this.detectionTint * 0.6))
       : blended;
@@ -399,8 +404,122 @@ export class DarkUnit {
       const flashStrength = Math.max(0, Math.min(1, 0.6 * (1 - completion)));
       fill = mixColors(fillBase, '#FFFFFF', flashStrength);
     }
-    ctx.fillStyle = fill;
-    ctx.fillRect(this.pos.x - half, this.pos.y - half, half * 2, half * 2);
+    const accent = mixColors(appearance.accent, '#FFFFFF', Math.min(0.35, this.detectionTint * 0.4));
+    const detail = mixColors(appearance.detail, '#FFFFFF', Math.min(0.25, this.detectionTint * 0.3));
+
+    ctx.save();
+    ctx.translate(this.pos.x, this.pos.y);
+    ctx.rotate(this.facingAngle);
+
+    switch (this.type) {
+      case 'scout': {
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.moveTo(half * 1.5, 0);
+        ctx.lineTo(-half * 0.9, -half * 1.05);
+        ctx.lineTo(-half * 0.4, 0);
+        ctx.lineTo(-half * 0.9, half * 1.05);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = accent;
+        ctx.beginPath();
+        ctx.moveTo(half * 0.8, 0);
+        ctx.lineTo(-half * 0.15, -half * 0.55);
+        ctx.lineTo(-half * 0.15, half * 0.55);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = detail;
+        ctx.beginPath();
+        ctx.arc(-half * 0.45, 0, half * 0.25, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = detail;
+        ctx.lineWidth = 1;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(half * 1.5, 0);
+        ctx.lineTo(-half * 0.9, -half * 1.05);
+        ctx.lineTo(-half * 0.9, half * 1.05);
+        ctx.closePath();
+        ctx.stroke();
+        break;
+      }
+      case 'tank': {
+        const radius = half * 1.15;
+        const vertical = half * 1.25;
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.moveTo(radius, 0);
+        ctx.lineTo(radius * 0.45, -vertical);
+        ctx.lineTo(-radius * 0.45, -vertical);
+        ctx.lineTo(-radius, 0);
+        ctx.lineTo(-radius * 0.45, vertical);
+        ctx.lineTo(radius * 0.45, vertical);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = accent;
+        ctx.beginPath();
+        ctx.moveTo(radius * 0.8, 0);
+        ctx.lineTo(radius * 0.35, -vertical * 0.55);
+        ctx.lineTo(-radius * 0.35, -vertical * 0.55);
+        ctx.lineTo(-radius * 0.8, 0);
+        ctx.lineTo(-radius * 0.35, vertical * 0.55);
+        ctx.lineTo(radius * 0.35, vertical * 0.55);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = detail;
+        ctx.beginPath();
+        ctx.arc(0, 0, half * 0.35, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = detail;
+        ctx.lineWidth = 1.4;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(radius, 0);
+        ctx.lineTo(radius * 0.45, -vertical);
+        ctx.lineTo(-radius * 0.45, -vertical);
+        ctx.lineTo(-radius, 0);
+        ctx.lineTo(-radius * 0.45, vertical);
+        ctx.lineTo(radius * 0.45, vertical);
+        ctx.closePath();
+        ctx.stroke();
+        break;
+      }
+      case 'priest': {
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, half * 1.1, half * 1.05, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = accent;
+        ctx.beginPath();
+        ctx.arc(0, 0, half * 0.65, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = detail;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(0, 0, half * 0.85, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = detail;
+        ctx.beginPath();
+        ctx.moveTo(0, -half * 0.3);
+        ctx.lineTo(half * 0.3, 0);
+        ctx.lineTo(0, half * 0.3);
+        ctx.lineTo(-half * 0.3, 0);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+    }
+
+    ctx.restore();
 
     if (this.type === 'priest' && this.priestRevealTimer > 0) {
       const haloStrength = Math.min(1, this.priestRevealTimer / PRIEST_REVEAL_DURATION);

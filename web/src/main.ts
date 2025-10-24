@@ -308,7 +308,9 @@ const questDialogSecondary = requireElement<HTMLButtonElement>('#questDialogSeco
 const questDialogCloseButton = requireElement<HTMLButtonElement>('#questDialogClose');
 
 let lastSupplies = game.getSupplies();
+let lastRelicShards = game.getRelicShards();
 let pendingGoldGain = 0;
+let pendingShardGain = 0;
 
 function resetGoldGainIndicator(): void {
   pendingGoldGain = 0;
@@ -328,6 +330,25 @@ function showGoldGainIndicator(amount: number): void {
 }
 
 heroGoldGain.addEventListener('animationend', resetGoldGainIndicator);
+
+function resetShardGainIndicator(): void {
+  pendingShardGain = 0;
+  heroShardGain.textContent = '';
+  heroShardGain.classList.remove('resource-gain--active');
+}
+
+function showShardGainIndicator(amount: number): void {
+  if (amount <= 0) {
+    return;
+  }
+  pendingShardGain += amount;
+  heroShardGain.textContent = `+${pendingShardGain}`;
+  heroShardGain.classList.remove('resource-gain--active');
+  void heroShardGain.offsetWidth;
+  heroShardGain.classList.add('resource-gain--active');
+}
+
+heroShardGain.addEventListener('animationend', resetShardGainIndicator);
 
 const inventorySlots: HTMLDivElement[] = [];
 for (let i = 0; i < INVENTORY_SLOTS; i++) {
@@ -1155,7 +1176,14 @@ function updateHud() {
   }
   lastSupplies = supplies;
   heroGoldText.textContent = `${supplies}`;
-  heroShardText.textContent = `${game.getRelicShards()}`;
+  const relicShards = game.getRelicShards();
+  if (relicShards > lastRelicShards) {
+    showShardGainIndicator(relicShards - lastRelicShards);
+  } else if (relicShards < lastRelicShards) {
+    resetShardGainIndicator();
+  }
+  lastRelicShards = relicShards;
+  heroShardText.textContent = `${relicShards}`;
   const hp = Math.max(0, game.knight.hp);
   const hpRatio = Math.max(0, Math.min(1, hp / KNIGHT_HP));
   heroHealthBar.style.width = `${hpRatio * 100}%`;
