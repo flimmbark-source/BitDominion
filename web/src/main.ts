@@ -147,6 +147,31 @@ appRootElement.innerHTML = `
           <ul class="quest-log-list" id="questLogList"></ul>
         </div>
       </div>
+      <div class="item-detail-overlay hidden" id="itemDetailOverlay" aria-hidden="true">
+        <div class="item-detail-panel" role="dialog" aria-modal="true" aria-labelledby="itemDetailTitle">
+          <button class="item-detail-close" id="itemDetailClose" type="button" aria-label="Close item details">×</button>
+          <div class="item-detail-header">
+            <div class="item-detail-icon" id="itemDetailIcon" aria-hidden="true">🔥</div>
+            <div class="item-detail-titles">
+              <h2 class="item-detail-title" id="itemDetailTitle">Item</h2>
+              <div class="item-detail-role" id="itemDetailRole"></div>
+            </div>
+          </div>
+          <div class="item-detail-meta" id="itemDetailMeta"></div>
+          <p class="item-detail-description" id="itemDetailDescription"></p>
+          <div class="item-detail-section hidden" id="itemDetailEvolutionSection">
+            <h3 class="item-detail-section-title">Evolution</h3>
+            <div class="item-detail-evolution-name" id="itemDetailEvolutionName"></div>
+            <p class="item-detail-evolution-description" id="itemDetailEvolutionDescription"></p>
+            <p class="item-detail-requirement" id="itemDetailRequirement"></p>
+            <p class="item-detail-status" id="itemDetailStatus"></p>
+          </div>
+          <div class="item-detail-section hidden" id="itemDetailTipsSection">
+            <h3 class="item-detail-section-title">Build Paths</h3>
+            <ul class="item-detail-tip-list" id="itemDetailTips"></ul>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 `;
@@ -295,6 +320,22 @@ const gameOverSubtext = requireElement<HTMLParagraphElement>('#gameOverSubtext')
 const questLogOverlay = requireElement<HTMLDivElement>('#questLogOverlay');
 const questLogList = requireElement<HTMLUListElement>('#questLogList');
 const questLogCloseButton = requireElement<HTMLButtonElement>('#questLogClose');
+const itemDetailOverlay = requireElement<HTMLDivElement>('#itemDetailOverlay');
+const itemDetailCloseButton = requireElement<HTMLButtonElement>('#itemDetailClose');
+const itemDetailIcon = requireElement<HTMLDivElement>('#itemDetailIcon');
+const itemDetailTitle = requireElement<HTMLHeadingElement>('#itemDetailTitle');
+const itemDetailRole = requireElement<HTMLDivElement>('#itemDetailRole');
+const itemDetailMeta = requireElement<HTMLDivElement>('#itemDetailMeta');
+const itemDetailDescription = requireElement<HTMLParagraphElement>('#itemDetailDescription');
+const itemDetailEvolutionSection = requireElement<HTMLDivElement>('#itemDetailEvolutionSection');
+const itemDetailEvolutionName = requireElement<HTMLDivElement>('#itemDetailEvolutionName');
+const itemDetailEvolutionDescription = requireElement<HTMLParagraphElement>(
+  '#itemDetailEvolutionDescription'
+);
+const itemDetailRequirement = requireElement<HTMLParagraphElement>('#itemDetailRequirement');
+const itemDetailStatus = requireElement<HTMLParagraphElement>('#itemDetailStatus');
+const itemDetailTipsSection = requireElement<HTMLDivElement>('#itemDetailTipsSection');
+const itemDetailTips = requireElement<HTMLUListElement>('#itemDetailTips');
 const questDialogElement = requireElement<HTMLDivElement>('#questDialog');
 const questDialogIcon = requireElement<HTMLDivElement>('#questDialogIcon');
 const questDialogTitle = requireElement<HTMLDivElement>('#questDialogTitle');
@@ -423,6 +464,96 @@ document.addEventListener('pointermove', (event) => {
   tooltipPanel.style.top = `${top}px`;
 });
 
+type ItemDetailOptions = { progressText?: string; evolved?: boolean };
+
+let activeItemDetailId: ItemId | null = null;
+
+function closeItemDetail(): void {
+  if (!activeItemDetailId) {
+    return;
+  }
+  activeItemDetailId = null;
+  itemDetailOverlay.classList.add('hidden');
+  itemDetailOverlay.setAttribute('aria-hidden', 'true');
+}
+
+function openItemDetail(itemId: ItemId, options?: ItemDetailOptions): void {
+  const definition = ITEM_DEFINITIONS[itemId];
+  if (!definition) {
+    return;
+  }
+  hideTooltip();
+  activeItemDetailId = itemId;
+  const costText = definition.cost > 0 ? `${definition.cost} Supplies` : 'Starting gear';
+  const categoryText = definition.category === 'weapon' ? 'Weapon' : 'Support';
+  itemDetailIcon.textContent = definition.icon;
+  itemDetailTitle.textContent = definition.name;
+  itemDetailRole.textContent = definition.role;
+  itemDetailMeta.textContent = `${categoryText} • Cost: ${costText}`;
+  itemDetailDescription.textContent = definition.description;
+
+  if (definition.evolution) {
+    itemDetailEvolutionSection.classList.remove('hidden');
+    itemDetailEvolutionName.textContent = definition.evolution.name;
+    itemDetailEvolutionDescription.textContent = definition.evolution.description;
+    const requirement = definition.evolveRequirement;
+    if (requirement) {
+      itemDetailRequirement.textContent = `Requirement: ${requirement.count} ${requirement.label}`;
+      itemDetailRequirement.classList.remove('hidden');
+    } else {
+      itemDetailRequirement.textContent = '';
+      itemDetailRequirement.classList.add('hidden');
+    }
+    if (options?.progressText) {
+      const statusLabel = options.evolved ? 'Status' : 'Progress';
+      itemDetailStatus.textContent = `${statusLabel}: ${options.progressText}`;
+      itemDetailStatus.classList.remove('hidden');
+    } else {
+      itemDetailStatus.textContent = '';
+      itemDetailStatus.classList.add('hidden');
+    }
+  } else {
+    itemDetailEvolutionSection.classList.add('hidden');
+    itemDetailRequirement.textContent = '';
+    itemDetailRequirement.classList.add('hidden');
+    itemDetailStatus.textContent = '';
+    itemDetailStatus.classList.add('hidden');
+  }
+
+  itemDetailTips.innerHTML = '';
+  if (definition.buildPaths.length) {
+    for (const tip of definition.buildPaths) {
+      const li = document.createElement('li');
+      li.textContent = tip;
+      itemDetailTips.appendChild(li);
+    }
+    itemDetailTipsSection.classList.remove('hidden');
+  } else {
+    itemDetailTipsSection.classList.add('hidden');
+  }
+
+  itemDetailOverlay.classList.remove('hidden');
+  itemDetailOverlay.setAttribute('aria-hidden', 'false');
+  itemDetailCloseButton.focus();
+}
+
+itemDetailCloseButton.addEventListener('click', () => {
+  closeItemDetail();
+});
+
+itemDetailOverlay.addEventListener('click', (event) => {
+  if (event.target === itemDetailOverlay) {
+    closeItemDetail();
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && activeItemDetailId) {
+    event.preventDefault();
+    closeItemDetail();
+  }
+});
+
 function updateInventory() {
   const loadout = game.getHeroLoadout();
   for (let i = 0; i < inventorySlots.length; i++) {
@@ -436,14 +567,38 @@ function updateInventory() {
       slot.onmouseenter = () =>
         showTooltip(entry.name, `${entry.description}<br /><em>${entry.status}</em>`);
       slot.onmouseleave = hideTooltip;
+      slot.onclick = (event) => {
+        if (!(event.target instanceof HTMLElement)) {
+          return;
+        }
+        if (event.target.closest('.item-icon')) {
+          openItemDetail(entry.id, { progressText: entry.status, evolved: entry.evolved });
+        }
+      };
+      const iconElement = slot.querySelector<HTMLDivElement>('.item-icon');
+      if (iconElement) {
+        iconElement.setAttribute('role', 'button');
+        iconElement.setAttribute('aria-label', `${entry.name} details`);
+        iconElement.tabIndex = 0;
+        iconElement.addEventListener('click', (event) => {
+          event.stopPropagation();
+          openItemDetail(entry.id, { progressText: entry.status, evolved: entry.evolved });
+        });
+        iconElement.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openItemDetail(entry.id, { progressText: entry.status, evolved: entry.evolved });
+          }
+        });
+      }
     } else {
       slot.innerHTML = '';
       slot.classList.remove('has-item', 'item-evolved');
       slot.classList.add('empty');
       slot.onmouseenter = null;
       slot.onmouseleave = null;
+      slot.onclick = null;
     }
-    slot.onclick = null;
   }
 }
 
@@ -584,14 +739,40 @@ function populateItemShop(): void {
     const definition = ITEM_DEFINITIONS[itemId];
     const button = document.createElement('button');
     button.className = 'shop-button';
-    button.innerHTML = `<span>${definition.icon} ${definition.name}</span><span class="price"></span>`;
+    const label = document.createElement('span');
+    label.className = 'shop-button-label';
+    const icon = document.createElement('span');
+    icon.className = 'shop-item-icon';
+    icon.textContent = definition.icon;
+    icon.setAttribute('role', 'button');
+    icon.setAttribute('aria-label', `${definition.name} details`);
+    icon.tabIndex = 0;
+    const name = document.createElement('span');
+    name.className = 'shop-item-name';
+    name.textContent = definition.name;
+    label.append(icon, name);
+    const price = document.createElement('span');
+    price.className = 'price';
+    button.append(label, price);
     button.addEventListener('click', () => {
       if (game.purchaseItem(itemId)) {
         updateItemShopButtons();
       }
     });
-    button.addEventListener('mouseenter', () => showTooltip(definition.name, definition.description));
+    button.addEventListener('mouseenter', () =>
+      showTooltip(definition.name, `${definition.description}<br /><em>${definition.role}</em>`)
+    );
     button.addEventListener('mouseleave', hideTooltip);
+    icon.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openItemDetail(itemId);
+    });
+    icon.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openItemDetail(itemId);
+      }
+    });
     itemShopItemsContainer.appendChild(button);
     itemButtons.set(itemId, button);
   }
