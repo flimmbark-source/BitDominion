@@ -1,5 +1,6 @@
 import './style.css';
 import { Game, CameraState, NearbyQuestInteraction, QuestLogEntry } from './game';
+import type { ClickLoadout, ClickModifierId } from './game/items/ClickModifiers';
 import {
   HEIGHT,
   WIDTH,
@@ -287,6 +288,16 @@ appRootElement.innerHTML = `
         </div>
         <div class="bar"><div class="bar-fill" id="darkEnergyFill"></div></div>
         <p id="darkEnergyText">Gathering energy…</p>
+        <div class="next-wave-timer" id="nextWaveTimer">Next wave: --</div>
+        <div class="village-status-panel hidden" id="villageStatusPanel">
+          <h3>Village Status</h3>
+          <ul class="village-status-list" id="villageStatusList"></ul>
+        </div>
+        <div class="downtime-quest-panel hidden" id="downtimeQuestPanel">
+          <div class="quest-header" id="downtimeQuestTitle"></div>
+          <div class="quest-body" id="downtimeQuestDescription"></div>
+          <div class="quest-progress" id="downtimeQuestProgress"></div>
+        </div>
       </div>
       <div class="lore-banner ui-panel" id="loreBanner">
         <div class="lore-banner-header">
@@ -347,6 +358,7 @@ appRootElement.innerHTML = `
       </div>
       <div class="shop-panel ui-panel hidden" id="itemShopPanel">
         <h2>Hero Arsenal</h2>
+        <div class="click-loadout-summary" id="clickLoadoutSummary"></div>
         <div class="shop-items" id="itemShopItemsContainer"></div>
       </div>
       <div class="tooltip" id="tooltipPanel"></div>
@@ -607,6 +619,13 @@ const buildPrompt = requireElement<HTMLButtonElement>('#buildPrompt');
 const buildErrorMessage = requireElement<HTMLDivElement>('#buildErrorMessage');
 const darkEnergyFill = requireElement<HTMLDivElement>('#darkEnergyFill');
 const darkEnergyText = requireElement<HTMLParagraphElement>('#darkEnergyText');
+const nextWaveTimerText = requireElement<HTMLDivElement>('#nextWaveTimer');
+const villageStatusPanel = requireElement<HTMLDivElement>('#villageStatusPanel');
+const villageStatusList = requireElement<HTMLUListElement>('#villageStatusList');
+const downtimeQuestPanel = requireElement<HTMLDivElement>('#downtimeQuestPanel');
+const downtimeQuestTitle = requireElement<HTMLDivElement>('#downtimeQuestTitle');
+const downtimeQuestDescription = requireElement<HTMLDivElement>('#downtimeQuestDescription');
+const downtimeQuestProgress = requireElement<HTMLDivElement>('#downtimeQuestProgress');
 const downtimeInfoButton = requireElement<HTMLButtonElement>('#downtimeInfo');
 const buffList = requireElement<HTMLUListElement>('#buffList');
 const campMarkerLayer = requireElement<HTMLDivElement>('#campMarkerLayer');
@@ -614,6 +633,7 @@ const buildingShopPanel = requireElement<HTMLDivElement>('#buildingShopPanel');
 const buildingShopItemsContainer = requireElement<HTMLDivElement>('#shopItemsContainer');
 const itemShopPanel = requireElement<HTMLDivElement>('#itemShopPanel');
 const itemShopItemsContainer = requireElement<HTMLDivElement>('#itemShopItemsContainer');
+const clickLoadoutSummary = requireElement<HTMLDivElement>('#clickLoadoutSummary');
 const gameOverScreen = requireElement<HTMLDivElement>('#gameOverScreen');
 const gameOverTitle = requireElement<HTMLHeadingElement>('#gameOverTitle');
 const gameOverSubtext = requireElement<HTMLParagraphElement>('#gameOverSubtext');
@@ -1552,6 +1572,7 @@ function updateBuildPrompt(): void {
 
 let isItemShopOpen = false;
 let lastPhase: 'downtime' | 'wave' | null = null;
+let lastVillageStatusHash = '';
 let tavernAutoOpen = false;
 let isQuestLogOpen = false;
 let activeQuestDialog: NearbyQuestInteraction | null = null;
@@ -1694,6 +1715,143 @@ function setItemShopOpen(open: boolean): void {
   updateItemShopButtons();
 }
 
+function renderVillageStatus(phase: 'downtime' | 'wave'): void {
+  const statuses = game.getVillageSummaries();
+  const normalized = statuses.map((status) => [
+    status.id,
+    Math.round(status.hp),
+    status.maxHp,
+    status.population,
+    status.maxPopulation,
+    status.destroyed,
+    status.underAttack,
+    status.repairCost
+  ]);
+  const hash = JSON.stringify({ phase, gold: game.getSupplies(), data: normalized });
+  if (hash === lastVillageStatusHash) {
+    return;
+  }
+  lastVillageStatusHash = hash;
+  villageStatusList.innerHTML = '';
+  villageStatusPanel.classList.toggle('hidden', statuses.length === 0);
+  for (const status of statuses) {
+    const item = document.createElement('li');
+    item.className = 'village-status-item';
+    if (status.destroyed) {
+      item.classList.add('destroyed');
+    } else if (status.underAttack) {
+      item.classList.add('under-attack');
+    }
+
+    const header = document.createElement('div');
+    header.className = 'village-status-header';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'village-name';
+    nameSpan.textContent = status.label;
+    const hpSpan = document.createElement('span');
+    hpSpan.className = 'village-hp';
+    hpSpan.textContent = `${Math.round(status.hp)}/${status.maxHp} HP`;
+    header.append(nameSpan, hpSpan);
+    item.appendChild(header);
+
+    const subtext = document.createElement('div');
+    subtext.className = 'village-status-subtext';
+    subtext.textContent = status.destroyed
+      ? 'Ruined by the swarm'
+      : `Population ${status.population}/${status.maxPopulation}`;
+    item.appendChild(subtext);
+
+    if (!status.destroyed) {
+      const repairButton = document.createElement('button');
+      repairButton.type = 'button';
+      repairButton.className = 'repair-button';
+      if (status.repairCost > 0) {
+        repairButton.textContent = `Repair (${status.repairCost})`;
+      } else {
+        repairButton.textContent = 'Repaired';
+        repairButton.disabled = true;
+      }
+      const canRepair =
+        phase === 'downtime' && status.repairCost > 0 && game.getSupplies() >= status.repairCost;
+      if (!canRepair) {
+        repairButton.disabled = true;
+      }
+      repairButton.addEventListener('click', () => {
+        if (game.repairVillage(status.id)) {
+          lastVillageStatusHash = '';
+        }
+      });
+      item.appendChild(repairButton);
+    }
+
+    villageStatusList.appendChild(item);
+  }
+}
+
+function formatModifierLabel(id: ClickModifierId): string {
+  switch (id) {
+    case 'multiHit':
+      return 'Multi-hit';
+    case 'splash':
+      return 'Splash';
+    case 'dot':
+      return 'Burn';
+    case 'crit':
+      return 'Crit';
+    case 'autoClick':
+      return 'Auto-click';
+    default:
+      return id;
+  }
+}
+
+function updateClickLoadoutSummary(): void {
+  const loadout: ClickLoadout = game.getClickLoadout();
+  const lines: string[] = [];
+  lines.push(`Base damage: ${Math.round(game.getClickDamage())}`);
+  if (loadout.multiHitCount > 1) {
+    lines.push(`Multi-hit: ${loadout.multiHitCount} strikes per click`);
+  } else {
+    lines.push('Multi-hit: Single strike');
+  }
+  if (loadout.splashRadius > 0 && loadout.splashPct > 0) {
+    lines.push(
+      `Splash: ${Math.round(loadout.splashRadius)}px at ${(loadout.splashPct * 100).toFixed(0)}% damage`
+    );
+  } else {
+    lines.push('Splash: None');
+  }
+  if (loadout.dot && loadout.dot.dps > 0 && loadout.dot.durationMs > 0) {
+    lines.push(
+      `Burn: ${loadout.dot.dps} DPS for ${(loadout.dot.durationMs / 1000).toFixed(1)}s`
+    );
+  } else {
+    lines.push('Burn: None');
+  }
+  if (loadout.critChance > 0) {
+    lines.push(`Crit: ${(loadout.critChance * 100).toFixed(0)}% ×${loadout.critMultiplier.toFixed(2)}`);
+  } else {
+    lines.push('Crit: None');
+  }
+  if (loadout.autoClickRate > 0) {
+    lines.push(`Auto-click: ${loadout.autoClickRate.toFixed(1)} strikes / sec`);
+  } else {
+    lines.push('Auto-click: Off');
+  }
+
+  const rankEntries = Object.entries(loadout.ranks) as [ClickModifierId, number][];
+  const rankSummary = rankEntries
+    .filter(([, count]) => count > 0)
+    .map(([id, count]) => `${formatModifierLabel(id)} ×${count}`)
+    .join(', ');
+
+  clickLoadoutSummary.innerHTML = `
+    <h3>Click Loadout</h3>
+    <ul>${lines.map((line) => `<li>${line}</li>`).join('')}</ul>
+    ${rankSummary ? `<p class="loadout-ranks">${rankSummary}</p>` : ''}
+  `;
+}
+
 function populateItemShop(): void {
   itemShopItemsContainer.innerHTML = '';
   itemButtons.clear();
@@ -1787,6 +1945,7 @@ function updateItemShopButtons(): void {
   }
   const shopVisible = isItemShopOpen && inDowntime;
   itemShopPanel.classList.toggle('hidden', !shopVisible);
+  updateClickLoadoutSummary();
 }
 
 function renderActivities(): void {
@@ -2399,14 +2558,29 @@ function updateHud() {
   if (phase === 'downtime') {
     const nextWave = waveIndex + 1;
     phaseText = `Downtime: Wave ${nextWave} begins in ${formatTimer(remaining)}`;
+    nextWaveTimerText.textContent = `Next wave: ${formatTimer(remaining)}`;
   } else {
     if (remaining > 0) {
       phaseText = `Wave ${waveIndex} underway — ${formatTimer(remaining)} remaining`;
+      nextWaveTimerText.textContent = `Wave ${waveIndex} remaining: ${formatTimer(remaining)}`;
     } else {
       phaseText = `Wave ${waveIndex} underway — clear remaining forces!`;
+      nextWaveTimerText.textContent = `Wave ${waveIndex} — clear remaining foes`;
     }
   }
   darkEnergyText.textContent = phaseText;
+  renderVillageStatus(phase);
+  const downtimeQuest = game.getDowntimeQuestHud();
+  if (downtimeQuest && phase === 'downtime') {
+    downtimeQuestPanel.classList.remove('hidden');
+    downtimeQuestPanel.classList.toggle('completed', downtimeQuest.completed);
+    downtimeQuestTitle.textContent = downtimeQuest.title;
+    downtimeQuestDescription.textContent = downtimeQuest.description;
+    downtimeQuestProgress.textContent = `${downtimeQuest.progressText} • ${downtimeQuest.rewardText}`;
+  } else {
+    downtimeQuestPanel.classList.add('hidden');
+    downtimeQuestPanel.classList.remove('completed');
+  }
   const atTavern = game.isKnightAtTavern() && game.isDowntime();
   if (atTavern) {
     tavernAutoOpen = true;

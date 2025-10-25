@@ -112,6 +112,122 @@ body {
   color: #d1d5db;
 }
 
+.next-wave-timer {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.village-status-panel {
+  margin-top: 10px;
+  padding: 8px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 8px;
+  text-align: left;
+}
+
+.village-status-panel h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #e2e8f0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.village-status-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.village-status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.village-status-item.destroyed {
+  background: rgba(71, 24, 24, 0.7);
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+}
+
+.village-status-item.under-attack {
+  border-color: rgba(248, 250, 109, 0.7);
+  box-shadow: 0 0 8px rgba(248, 250, 109, 0.35);
+}
+
+.village-status-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #e2e8f0;
+}
+
+.village-status-subtext {
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.75);
+}
+
+.repair-button {
+  align-self: flex-end;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(37, 99, 235, 0.6);
+  background: rgba(30, 64, 175, 0.6);
+  color: #bfdbfe;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.repair-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.downtime-quest-panel {
+  margin-top: 10px;
+  padding: 8px;
+  background: rgba(49, 46, 129, 0.6);
+  border: 1px solid rgba(129, 140, 248, 0.4);
+  border-radius: 8px;
+  text-align: left;
+  color: #e0e7ff;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.downtime-quest-panel.completed {
+  background: rgba(22, 101, 52, 0.6);
+  border-color: rgba(74, 222, 128, 0.55);
+  color: #bbf7d0;
+}
+
+.downtime-quest-panel .quest-header {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.downtime-quest-panel .quest-body {
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.85);
+}
+
+.downtime-quest-panel .quest-progress {
+  font-size: 12px;
+  color: rgba(224, 231, 255, 0.9);
+}
+
 .panel-heading {
   display: flex;
   align-items: center;
@@ -803,6 +919,42 @@ body {
   font-size: 26px;
   color: #fbbf24;
   font-family: 'MedievalSharp', cursive;
+}
+
+.click-loadout-summary {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: #f8fafc;
+}
+
+.click-loadout-summary h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  color: #facc15;
+  font-family: 'MedievalSharp', cursive;
+  text-align: left;
+}
+
+.click-loadout-summary ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.click-loadout-summary li {
+  line-height: 1.35;
+}
+
+.click-loadout-summary .loadout-ranks {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #cbd5f5;
 }
 
 .shop-items {
