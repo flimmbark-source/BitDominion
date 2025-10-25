@@ -26,9 +26,12 @@ import {
   HP_BAR_WIDTH,
   HUD_COLOR,
   KNIGHT_BOW_NOISE,
+  CLICK_BASE_DAMAGE,
+  CLICK_TARGET_RADIUS,
+  CLICK_NOISE_STRENGTH,
+  AUTO_CLICK_NOISE_STRENGTH,
   KNIGHT_HP,
   KNIGHT_SIZE,
-  KNIGHT_SPEED_BOOST_MULTIPLIER,
   LURE_BEACON_NOISE_INTERVAL,
   LURE_BEACON_NOISE_STRENGTH,
   MAX_UNITS,
@@ -124,6 +127,7 @@ import {
   isKnightWithinConstructionRange
 } from './entities/building';
 import { Knight } from './entities/knight';
+import { ClickModifierSystem, type ClickHitContext } from './entities/clickModifiers';
 import { Seal } from './entities/seal';
 import { Vector2 } from './math/vector2';
 import { World } from './world';
@@ -133,12 +137,20 @@ import {
   type MetaUpgradeId,
   getMetaUpgradeDefinition
 } from './config/metaProgression';
+import { IsoTransform } from './utils/isometric';
+import waveConfigData from './darkSurge/WaveConfig.json';
+import {
+  WaveController,
+  type WaveConfig,
+  type WaveSpawnRequest
+} from './darkSurge/WaveController';
+import { EnemySwarm } from './darkSurge/EnemySwarm';
+import { Village as SurgeVillage, type VillageAttackEvent } from './darkSurge/Village';
 
 export interface CameraState {
-  center: { x: number; y: number };
-  zoom: number;
   viewportWidth: number;
   viewportHeight: number;
+  iso: IsoTransform;
 }
 
 export type GameState = 'running' | 'victory' | 'defeat';
@@ -240,6 +252,7 @@ type QuestType = 'escort' | 'retrieve';
 const QUEST_INTERACTION_RADIUS = 96;
 const CREEP_APPROACH_BUFFER = 80;
 const BUILD_PREVIEW_TILE_SIZE = 12;
+const ISO_CASTLE_SCALE = 1.6;
 
 function rectanglesOverlap(
   leftA: number,
@@ -498,6 +511,8 @@ export class Game {
   private ownedItems: Set<ItemId> = new Set();
   private weaponStates: Map<ItemId, WeaponRuntimeState> = new Map();
   private supportItems: Set<ItemId> = new Set();
+  private clickModifiers: ClickModifierSystem;
+  private persistentItemIds: Set<ItemId> = new Set();
   private phase: GamePhase = 'downtime';
   private phaseTimer = DOWNTIME_DURATION;
   private waveIndex = 0;
@@ -535,12 +550,35 @@ export class Game {
   private knightInTavern = false;
   private nearbyCreepCampIds: Set<number> = new Set();
   private noiseListener: ((strength: number) => void) | null = null;
+  private readonly waveConfig: WaveConfig = waveConfigData as WaveConfig;
+  private waveController!: WaveController;
+  private surgeVillages: SurgeVillage[] = [];
+  private surgeEnemies: EnemySwarm[] = [];
+  private surgeEnemyPool: EnemySwarm[] = [];
+  private surgeEnemyIdCounter = 1;
+  private villageAudioContext: AudioContext | null = null;
 
   constructor() {
     this.world = new World();
+    this._initializeDarkSurgeState();
     this.anchors = this._generateAnchors();
     this.seals = this._generateSeals();
     this.shieldWasActive = this._isShieldActive();
+    this.clickModifiers = new ClickModifierSystem(
+      {
+        findPrimaryTarget: (position, radius) => this._findNearestUnitToPoint(position, radius),
+        findUnitsInRadius: (position, radius) => this._findUnitsInRadius(position, radius),
+        getRandomTarget: () => this._getRandomAliveUnit(),
+        baseDamage: () => this._getClickDamage(),
+        onHit: (target, damage, context) => this._handleClickHit(target, damage, context),
+        emitNoise: (position, strength) => this._emitNoise(position, strength)
+      },
+      {
+        manualNoise: CLICK_NOISE_STRENGTH,
+        autoNoise: AUTO_CLICK_NOISE_STRENGTH,
+        targetRadius: CLICK_TARGET_RADIUS
+      }
+    );
     this.world.setBuildingObstacles([]);
     this._initializeQuestGivers();
     this._initializeKnightLoadout();
@@ -555,6 +593,7 @@ export class Game {
     this.brokenSeals = 0;
     this.state = 'running';
     this.world = new World();
+    this._initializeDarkSurgeState();
     this.anchors = this._generateAnchors();
     this.nextAnchorIndex = 0;
     this.lastKnownKnightPos = null;
@@ -632,6 +671,17 @@ export class Game {
     return Array.from(this.ownedItems);
   }
 
+  setPersistentItems(items: ItemId[]): void {
+    this.persistentItemIds = new Set(items);
+    this._applyPersistentItems();
+  }
+
+  addPersistentItem(itemId: ItemId): void {
+    if (!this.persistentItemIds.has(itemId)) {
+      this.persistentItemIds.add(itemId);
+    }
+  }
+
   getHeroLoadout(): HeroLoadoutEntry[] {
     const entries: HeroLoadoutEntry[] = [];
     for (const itemId of this.ownedItems) {
@@ -639,6 +689,7 @@ export class Game {
       if (!definition) {
         continue;
       }
+      const isClickModifier = this._isClickModifier(itemId);
       const entry: HeroLoadoutEntry = {
         id: itemId,
         name: definition.name,
@@ -648,7 +699,7 @@ export class Game {
         evolved: false,
         category: definition.category
       };
-      if (definition.category === 'weapon') {
+      if (definition.category === 'weapon' && !isClickModifier) {
         const state = this.weaponStates.get(itemId);
         const requirement = definition.evolveRequirement;
         if (requirement) {
@@ -678,7 +729,7 @@ export class Game {
           entry.evolved = !!state?.evolved;
         }
       } else {
-        entry.status = 'Passive';
+        entry.status = isClickModifier ? 'Click modifier' : 'Passive';
       }
       entries.push(entry);
     }
@@ -1208,6 +1259,7 @@ export class Game {
     }
 
     this.knight.setTarget(point.clone());
+    this.clickModifiers.handleClick(point.clone());
 
     if (typeof timeSeconds === 'number') {
       this.lastPointerTime = timeSeconds;
@@ -1284,6 +1336,7 @@ export class Game {
 
   update(dt: number): void {
     this.world.beginFrame(dt);
+    this._updateVillageStates(dt);
     if (this.buildErrorTimer > 0) {
       this.buildErrorTimer = Math.max(0, this.buildErrorTimer - dt);
       if (this.buildErrorTimer === 0) {
@@ -1320,9 +1373,11 @@ export class Game {
       unit.tryAttack(this.knight, this.world, this, dt);
     }
 
+    this._updateSurgeSystems(dt);
+
     this._updateWeapons(dt);
-    this.units = this.units.filter((unit) => unit.alive);
-    this._syncUnitLookup();
+    this.clickModifiers.update(dt);
+    this._pruneDeadUnits();
 
     this._updateBuildings(dt);
     this._updateDismantle(dt);
@@ -1368,8 +1423,7 @@ export class Game {
         if (kills > 0) {
           this._emitNoise(this.knight.pos, NOISE_ATTACK_STRENGTH);
         }
-        this.units = this.units.filter((unit) => unit.alive);
-        this._syncUnitLookup();
+        this._pruneDeadUnits();
       }
     }
 
@@ -1380,8 +1434,128 @@ export class Game {
     this._updateVictory(dt);
   }
 
+  private _updateSurgeSystems(dt: number): void {
+    if (!this.waveController) {
+      return;
+    }
+    this.waveController.update(dt, {
+      activeEnemies: this.surgeEnemies.length,
+      canSpawn: () => this.surgeEnemies.length < this.waveController.getMaxActive(),
+      spawn: (request: WaveSpawnRequest) => this._spawnSurgeEnemy(request),
+      onWaveComplete: () => this._onSurgeWaveCleared()
+    });
+
+    if (!this.surgeEnemies.length) {
+      return;
+    }
+
+    const villages = this.surgeVillages;
+    const neighbors = this.surgeEnemies;
+    const survivors: EnemySwarm[] = [];
+    for (const enemy of this.surgeEnemies) {
+      const event = enemy.update({ dt, villages, neighbors });
+      if (event) {
+        this._handleVillageAttack(event);
+      }
+      if (enemy.isAlive()) {
+        survivors.push(enemy);
+      } else {
+        this.surgeEnemyPool.push(enemy);
+      }
+    }
+    this.surgeEnemies = survivors;
+  }
+
+  private _updateVillageStates(dt: number): void {
+    if (!this.surgeVillages.length) {
+      return;
+    }
+    for (const village of this.surgeVillages) {
+      village.update(dt);
+    }
+  }
+
+  private _spawnSurgeEnemy(request: WaveSpawnRequest): void {
+    const enemy = this.surgeEnemyPool.pop() ?? new EnemySwarm(this.surgeEnemyIdCounter++);
+    enemy.reset(request.position.clone(), request.stats);
+    this.surgeEnemies.push(enemy);
+  }
+
+  private _handleVillageAttack(event: VillageAttackEvent): void {
+    this._spawnVillageHitEffect(event.village, event);
+    this._playVillageAlarm(event.village.center);
+  }
+
+  private _spawnVillageHitEffect(village: SurgeVillage, event: VillageAttackEvent): void {
+    const radius = Math.max(22, village.canopyRadius * 0.75);
+    this._spawnHitFlash(village.center, radius, { strong: false });
+    if (event.destroyedBuilding) {
+      this._spawnHitFlash(event.destroyedBuilding.position, 18, { strong: true });
+    }
+  }
+
+  private _handleVillageCollapse(village: SurgeVillage): void {
+    this._spawnVillageCollapseEffect(village);
+    if (this.surgeVillages.every((entry) => entry.isDestroyed())) {
+      this.state = 'defeat';
+    }
+  }
+
+  private _spawnVillageCollapseEffect(village: SurgeVillage): void {
+    const radius = Math.max(32, village.canopyRadius);
+    this._spawnHitFlash(village.center, radius, { strong: true });
+    this._playVillageAlarm(village.center);
+  }
+
+  private _collectVillageIncome(): number {
+    let total = 0;
+    for (const village of this.surgeVillages) {
+      total += village.collectIncome();
+    }
+    return total;
+  }
+
+  private _announceVillageIncome(amount: number): void {
+    if (amount <= 0) {
+      return;
+    }
+    this._spawnDamageNumber(CASTLE_POS.clone(), amount, { emphasis: true, color: '#F8E27A' });
+  }
+
+  private _onSurgeWaveCleared(): void {
+    // Placeholder for future hooks such as achievements or notifications.
+  }
+
+  private _playVillageAlarm(_position: Vector2): void {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const AudioCtx =
+      (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext) ??
+      null;
+    if (!AudioCtx) {
+      return;
+    }
+    if (!this.villageAudioContext) {
+      this.villageAudioContext = new AudioCtx();
+    }
+    const context = this.villageAudioContext;
+    const now = context.currentTime;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sawtooth';
+    oscillator.frequency.setValueAtTime(260, now);
+    oscillator.frequency.exponentialRampToValueAtTime(140, now + 0.4);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.65);
+  }
+
   draw(ctx: CanvasRenderingContext2D, camera: CameraState): void {
-    const { center, zoom, viewportWidth, viewportHeight } = camera;
+    const { viewportWidth, viewportHeight, iso } = camera;
 
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1389,14 +1563,20 @@ export class Game {
     ctx.restore();
 
     ctx.save();
-    ctx.translate(viewportWidth / 2, viewportHeight / 2);
-    ctx.scale(zoom, zoom);
-    ctx.translate(-center.x, -center.y);
+    ctx.setTransform(
+      iso.scale * iso.cos,
+      iso.scale * iso.sin,
+      -iso.scale * iso.cos,
+      iso.scale * iso.sin,
+      iso.offsetX,
+      iso.offsetY
+    );
 
     ctx.fillStyle = BACKGROUND_COLOR;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
     this.world.drawTerrain(ctx);
+    this._drawVillageDestruction(ctx);
     this._drawShield(ctx);
     this._drawCastle(ctx);
     this._drawBuildings(ctx);
@@ -1410,6 +1590,8 @@ export class Game {
     for (const unit of this.units) {
       unit.draw(ctx);
     }
+
+    this._drawSurgeEnemies(ctx);
 
     this._drawProjectiles(ctx);
     this._drawDarkProjectiles(ctx);
@@ -1452,12 +1634,23 @@ export class Game {
 
   private _enterDowntime(): void {
     this.phase = 'downtime';
-    this.phaseTimer = DOWNTIME_DURATION;
+    this.phaseTimer = this.waveController.getDowntimeDuration();
     this.weaponOrbitVisuals = [];
     this.smokeFields = [];
     this.waveRallyPoint = null;
     this.nearbyCreepCampIds.clear();
     this._generateDowntimeActivities();
+    this.waveController.beginDowntime();
+    if (this.waveIndex > 0) {
+      const income = this._collectVillageIncome();
+      if (income > 0) {
+        this._addSupplies(income);
+        this._announceVillageIncome(income);
+      }
+    }
+    for (const village of this.surgeVillages) {
+      village.beginDowntime();
+    }
   }
 
   private _startWave(): void {
@@ -1474,6 +1667,7 @@ export class Game {
     this._expireTemporaryBuffs();
     this._removeRemainingWildUnits();
     this.waveRallyPoint = this._chooseWaveRallyPoint();
+    this.waveController.startWave(this.waveIndex);
     this.darkLord.beginWave(this, this.waveIndex);
   }
 
@@ -1487,7 +1681,12 @@ export class Game {
       }
     } else {
       this.phaseTimer = Math.max(0, this.phaseTimer - dt);
-      if (this.phaseTimer <= 0 && this._countDarkUnits() === 0) {
+      if (
+        this.phaseTimer <= 0 &&
+        this._countDarkUnits() === 0 &&
+        this._countSurgeEnemies() === 0 &&
+        !this.waveController.isWaveRunning()
+      ) {
         this._enterDowntime();
       }
     }
@@ -2372,6 +2571,10 @@ export class Game {
     return count;
   }
 
+  private _countSurgeEnemies(): number {
+    return this.surgeEnemies.length;
+  }
+
   private _syncUnitLookup(): void {
     for (const [id, unit] of this.unitLookup) {
       if (!unit.alive) {
@@ -2431,6 +2634,86 @@ export class Game {
       nearestDist = distance;
     }
     return nearest;
+  }
+
+  private _findNearestUnitToPoint(position: Vector2, radius: number): DarkUnit | null {
+    let nearest: DarkUnit | null = null;
+    let nearestDist = radius;
+    for (const unit of this.units) {
+      if (!unit.alive) {
+        continue;
+      }
+      const distance = unit.pos.distanceTo(position);
+      if (distance > radius || distance >= nearestDist) {
+        continue;
+      }
+      nearest = unit;
+      nearestDist = distance;
+    }
+    return nearest;
+  }
+
+  private _findUnitsInRadius(position: Vector2, radius: number): DarkUnit[] {
+    if (radius <= 0) {
+      return [];
+    }
+    const results: DarkUnit[] = [];
+    for (const unit of this.units) {
+      if (!unit.alive) {
+        continue;
+      }
+      if (unit.pos.distanceTo(position) <= radius) {
+        results.push(unit);
+      }
+    }
+    return results;
+  }
+
+  private _getRandomAliveUnit(): DarkUnit | null {
+    const alive = this.units.filter((unit) => unit.alive);
+    if (!alive.length) {
+      return null;
+    }
+    const index = Math.floor(Math.random() * alive.length);
+    return alive[index] ?? null;
+  }
+
+  private _getClickDamage(): number {
+    return CLICK_BASE_DAMAGE * (1 + this.weaponDamageBonus);
+  }
+
+  private _handleClickHit(target: DarkUnit, damage: number, context: ClickHitContext): void {
+    if (!target.alive || damage <= 0) {
+      return;
+    }
+    const preHp = target.hp;
+    target.takeDamage(damage);
+    const dealt = Math.max(0, preHp - target.hp);
+    if (dealt <= 0) {
+      return;
+    }
+    const strong = !target.alive;
+    const color = context.crit ? '#fde68a' : undefined;
+    this._spawnHitFlash(target.pos, target.getCollisionRadius(), { strong });
+    this._spawnDamageNumber(target.pos, dealt, { emphasis: context.crit || strong, color });
+    if (context.burn && target.alive) {
+      target.applyDot(context.burn.dps, context.burn.duration);
+    }
+    if (context.freeze && target.alive) {
+      target.applySlow(context.freeze.factor, context.freeze.duration);
+    }
+    if (!target.alive) {
+      this._onUnitKilled(target);
+    }
+    this._pruneDeadUnits();
+  }
+
+  private _pruneDeadUnits(): void {
+    if (!this.units.length) {
+      return;
+    }
+    this.units = this.units.filter((unit) => unit.alive);
+    this._syncUnitLookup();
   }
 
   private _rotateVector(vector: Vector2, angle: number): Vector2 {
@@ -2661,6 +2944,39 @@ export class Game {
     return this.brokenSeals < SEAL_COUNT;
   }
 
+  private _drawVillageDestruction(ctx: CanvasRenderingContext2D): void {
+    if (!this.surgeVillages.length) {
+      return;
+    }
+    ctx.save();
+    for (const village of this.surgeVillages) {
+      const center = village.center;
+      const radius = Math.max(30, village.canopyRadius * 0.85);
+      const burn = village.getBurnIntensity();
+      if (burn > 0) {
+        ctx.fillStyle = `rgba(255, 90, 32, ${(0.18 + burn * 0.5).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const flash = village.getAttackFlash();
+      if (flash > 0) {
+        ctx.fillStyle = `rgba(255, 196, 74, ${(0.22 + flash * 0.45).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, radius * 0.9, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const collapse = village.getCollapseProgress();
+      if (collapse > 0) {
+        ctx.fillStyle = `rgba(32, 18, 12, ${(0.35 + collapse * 0.55).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, radius * (0.7 + collapse * 0.3), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
   private _drawShield(ctx: CanvasRenderingContext2D): void {
     const shieldActive = this._isShieldActive();
     if (!shieldActive && this.shieldFlashTimer <= 0) {
@@ -2691,7 +3007,7 @@ export class Game {
 
   private _drawCastle(ctx: CanvasRenderingContext2D): void {
     const pulse = (Math.sin(performance.now() / 300) + 1) * 0.5;
-    const size = CASTLE_SIZE + pulse * 4;
+    const size = (CASTLE_SIZE + pulse * 4) * ISO_CASTLE_SCALE;
     const color = {
       r: Math.min(255, CASTLE_COLOR_DEC.r + pulse * 40),
       g: Math.min(255, CASTLE_COLOR_DEC.g + pulse * 40),
@@ -2813,6 +3129,15 @@ export class Game {
     }
   }
 
+  private _drawSurgeEnemies(ctx: CanvasRenderingContext2D): void {
+    if (!this.surgeEnemies.length) {
+      return;
+    }
+    for (const enemy of this.surgeEnemies) {
+      enemy.draw(ctx);
+    }
+  }
+
   private _drawProjectiles(ctx: CanvasRenderingContext2D): void {
     if (!this.projectiles.length) {
       return;
@@ -2852,6 +3177,10 @@ export class Game {
     ctx.restore();
   }
 
+  private _drawDirectionalIndicators(_ctx: CanvasRenderingContext2D, _camera: CameraState): void {
+    // The single-screen isometric view keeps every point of interest visible.
+  }
+
   private _drawBuildPreview(ctx: CanvasRenderingContext2D): void {
     if (!this.buildMode || !this.buildCursor) {
       return;
@@ -2887,104 +3216,6 @@ export class Game {
     ctx.moveTo(position.x, position.y - 8);
     ctx.lineTo(position.x, position.y + 8);
     ctx.stroke();
-    ctx.restore();
-  }
-
-  private _drawDirectionalIndicators(ctx: CanvasRenderingContext2D, camera: CameraState): void {
-    const targets: { position: Vector2; color: string; icon: string }[] = [];
-
-    for (const marker of this.questMarkers) {
-      if (!marker.visible) {
-        continue;
-      }
-      targets.push({ position: marker.position, color: 'rgba(251, 191, 36, 0.95)', icon: marker.icon });
-    }
-
-    for (const camp of this.creepCamps) {
-      if (camp.cleared) {
-        continue;
-      }
-      targets.push({ position: camp.position, color: 'rgba(96, 165, 250, 0.95)', icon: '⚔' });
-    }
-
-    if (!targets.length) {
-      return;
-    }
-
-    const { center, zoom, viewportWidth, viewportHeight } = camera;
-    const margin = 36;
-    const halfWidth = viewportWidth / 2 - margin;
-    const halfHeight = viewportHeight / 2 - margin;
-    const arrowLength = 26;
-    const arrowWidth = 14;
-    const labelDistance = 40;
-
-    if (halfWidth <= 0 || halfHeight <= 0) {
-      return;
-    }
-
-    ctx.save();
-    ctx.font = '16px Inter';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    for (const target of targets) {
-      const vx = (target.position.x - center.x) * zoom;
-      const vy = (target.position.y - center.y) * zoom;
-
-      if (Math.abs(vx) <= halfWidth && Math.abs(vy) <= halfHeight) {
-        continue;
-      }
-
-      let scale = 1;
-      if (Math.abs(vx) > halfWidth) {
-        scale = Math.min(scale, halfWidth / Math.abs(vx));
-      }
-      if (Math.abs(vy) > halfHeight) {
-        scale = Math.min(scale, halfHeight / Math.abs(vy));
-      }
-
-      if (!Number.isFinite(scale) || scale <= 0) {
-        continue;
-      }
-
-      const arrowX = viewportWidth / 2 + vx * scale;
-      const arrowY = viewportHeight / 2 + vy * scale;
-      const angle = Math.atan2(vy, vx);
-
-      ctx.save();
-      ctx.translate(arrowX, arrowY);
-      ctx.rotate(angle);
-      ctx.globalAlpha = 0.95;
-      ctx.fillStyle = target.color;
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(-arrowLength, arrowWidth / 2);
-      ctx.lineTo(-arrowLength, -arrowWidth / 2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = 'rgba(17, 24, 39, 0.9)';
-      ctx.stroke();
-      ctx.restore();
-
-      const labelX = arrowX - Math.cos(angle) * labelDistance;
-      const labelY = arrowY - Math.sin(angle) * labelDistance;
-
-      ctx.save();
-      ctx.globalAlpha = 0.92;
-      ctx.fillStyle = 'rgba(17, 24, 39, 0.85)';
-      ctx.beginPath();
-      ctx.arc(labelX, labelY, 12, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = target.color;
-      ctx.stroke();
-      ctx.fillStyle = '#f9fafb';
-      ctx.fillText(target.icon, labelX, labelY + 0.5);
-      ctx.restore();
-    }
-
     ctx.restore();
   }
 
@@ -3071,6 +3302,24 @@ export class Game {
     }
   }
 
+  private _initializeDarkSurgeState(): void {
+    this.waveController = new WaveController(this.waveConfig, { castlePosition: CASTLE_POS.clone() });
+    this.surgeEnemies = [];
+    this.surgeEnemyPool = [];
+    this.surgeEnemyIdCounter = 1;
+    this._rebuildSurgeVillages();
+  }
+
+  private _rebuildSurgeVillages(): void {
+    const villages = Array.from(this.world.getVillages());
+    this.surgeVillages = villages.map(
+      (village, index) =>
+        new SurgeVillage(index + 1, village, this.waveConfig.village, (collapsed) =>
+          this._handleVillageCollapse(collapsed)
+        )
+    );
+  }
+
   private _initializeKnightLoadout(): void {
     this.ownedItems.clear();
     this.weaponStates.clear();
@@ -3082,7 +3331,26 @@ export class Game {
     this.knightProjectiles = [];
     this.knightProjectileIdCounter = 1;
     this.knight.setTemporarySpeedMultiplier(1);
+    this.clickModifiers.reset();
     this._grantItem('steelSword');
+    this._applyPersistentItems();
+  }
+
+  private _applyPersistentItems(): void {
+    if (!this.persistentItemIds.size) {
+      return;
+    }
+    for (const itemId of this.persistentItemIds) {
+      if (itemId === 'steelSword') {
+        continue;
+      }
+      this._grantItem(itemId);
+    }
+  }
+
+  private _isClickModifier(itemId: ItemId): boolean {
+    const definition = ITEM_DEFINITIONS[itemId];
+    return !!definition?.clickEffects && definition.clickEffects.length > 0;
   }
 
   private _grantItem(itemId: ItemId): void {
@@ -3093,8 +3361,9 @@ export class Game {
     if (definition.unique && this.ownedItems.has(itemId)) {
       return;
     }
+    const isClickModifier = this._isClickModifier(itemId);
     this.ownedItems.add(itemId);
-    if (definition.category === 'weapon' && !this.weaponStates.has(itemId)) {
+    if (definition.category === 'weapon' && !isClickModifier && !this.weaponStates.has(itemId)) {
       this.weaponStates.set(itemId, {
         id: itemId,
         cooldown: 0,
@@ -3104,8 +3373,13 @@ export class Game {
         data: {}
       });
     }
-    if (definition.category === 'support') {
+    if (definition.category === 'support' || isClickModifier) {
       this.supportItems.add(itemId);
+    }
+    if (definition.clickEffects) {
+      for (const effect of definition.clickEffects) {
+        this.clickModifiers.addEffect(effect);
+      }
     }
     this._applyItemEffect(itemId);
   }
@@ -3114,14 +3388,6 @@ export class Game {
     switch (itemId) {
       case 'steelSword':
         this.knight.equipMeleeWeapon();
-        break;
-      case 'scoutBoots':
-        this.knight.addSpeedMultiplier(KNIGHT_SPEED_BOOST_MULTIPLIER);
-        this.rescueMasteryBonus += 1;
-        break;
-      case 'hunterJerky':
-        this.weaponDamageBonus += 0.2;
-        this.killMasteryBonus += 0.25;
         break;
       default:
         break;
@@ -3292,7 +3558,7 @@ export class Game {
       this._removeBuildingsById(removals);
     }
 
-    this.units = this.units.filter((unit) => unit.alive);
+    this._pruneDeadUnits();
   }
 
   private _updateDismantle(dt: number): void {
@@ -3366,7 +3632,7 @@ export class Game {
         }
         if (wasAlive && !hitUnit.alive) {
           this._onUnitKilled(hitUnit);
-          this.units = this.units.filter((unit) => unit.alive);
+          this._pruneDeadUnits();
         }
         continue;
       }
@@ -3994,7 +4260,7 @@ export class Game {
         if (wasAlive && !unit.alive) {
           this._onUnitKilled(unit);
         }
-        this.units = this.units.filter((candidate) => candidate.alive);
+        this._pruneDeadUnits();
         building.data.used = true;
         return true;
       }

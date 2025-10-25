@@ -17,6 +17,12 @@ import {
   getMetaUpgradeDefinition,
   getWeaponDefinitionForMeta
 } from './config/metaProgression';
+import {
+  createIsoTransform,
+  worldToScreen as isoWorldToScreen,
+  screenToWorld as isoScreenToWorld,
+  projectRadius as isoProjectRadius
+} from './utils/isometric';
 
 const BUILDING_DISPLAY: Record<BuildingType, { icon: string; name: string; description: string }> = {
   watchtower: {
@@ -58,7 +64,7 @@ interface TutorialStepDefinition {
 const TUTORIAL_STEPS: Record<TutorialStepId, TutorialStepDefinition> = {
   movement: {
     title: 'Movement Basics',
-    body: 'Left-click the ground to guide Rowan. Use the camera if you need to scout ahead.',
+    body: 'Left-click the ground to guide Rowan. The valley is fully visible, so plan your path at a glance.',
     icon: '🧭',
     keys: ['Left Click']
   },
@@ -252,10 +258,6 @@ class TutorialManager {
 }
 
 const INVENTORY_SLOTS = ITEM_ORDER.length + 1;
-const INITIAL_CAMERA_ZOOM = 1.6;
-const MIN_CAMERA_ZOOM = 0.75;
-const MAX_CAMERA_ZOOM = 2.5;
-const CAMERA_PAN_SPEED = 240;
 const GAME_SHELL_GAP = 0;
 
 const appRoot = document.querySelector<HTMLDivElement>('#app');
@@ -489,7 +491,7 @@ appRootElement.innerHTML = `
           <div class="escape-menu-help hidden" id="escapeMenuHelpContent" aria-hidden="true">
             <div class="escape-menu-help-section">
               <h3>Map Controls</h3>
-              <p>Use WASD to pan the camera, scroll to zoom in or out, and press Space to snap back to Rowan.</p>
+              <p>The entire battlefield is framed on screen—just click to move Rowan and manage your defenses.</p>
             </div>
             <div class="escape-menu-help-section">
               <h3>Noise &amp; Suspicion</h3>
@@ -549,79 +551,49 @@ window.addEventListener('resize', updateGameViewportSize);
 window.addEventListener('orientationchange', updateGameViewportSize);
 updateGameViewportSize();
 
-const camera = {
-  center: { x: WIDTH / 2, y: HEIGHT / 2 },
-  zoom: INITIAL_CAMERA_ZOOM
-};
-
-function clampCamera() {
-  const halfViewWidth = (canvas.width / camera.zoom) / 2;
-  const halfViewHeight = (canvas.height / camera.zoom) / 2;
-
-  const minX = halfViewWidth;
-  const maxX = WIDTH - halfViewWidth;
-  if (minX > maxX) {
-    camera.center.x = WIDTH / 2;
-  } else {
-    camera.center.x = Math.max(minX, Math.min(maxX, camera.center.x));
-  }
-
-  const minY = halfViewHeight;
-  const maxY = HEIGHT - halfViewHeight;
-  if (minY > maxY) {
-    camera.center.y = HEIGHT / 2;
-  } else {
-    camera.center.y = Math.max(minY, Math.min(maxY, camera.center.y));
-  }
-}
-
-const cameraPan = { up: false, down: false, left: false, right: false };
-
-function updateCameraPosition(dt: number): void {
-  let dx = 0;
-  let dy = 0;
-  if (cameraPan.left) {
-    dx -= 1;
-  }
-  if (cameraPan.right) {
-    dx += 1;
-  }
-  if (cameraPan.up) {
-    dy -= 1;
-  }
-  if (cameraPan.down) {
-    dy += 1;
-  }
-  if (dx === 0 && dy === 0) {
-    return;
-  }
-  const length = Math.hypot(dx, dy);
-  if (length > 0) {
-    dx /= length;
-    dy /= length;
-  }
-  const speed = CAMERA_PAN_SPEED / camera.zoom;
-  camera.center.x += dx * speed * dt;
-  camera.center.y += dy * speed * dt;
-  clampCamera();
-}
-
-clampCamera();
-
 const game = new Game();
 game.setCanvasHudEnabled(false);
 
-function focusCameraOnKnight(options?: { zoom?: number }): void {
-  if (options && typeof options.zoom === 'number') {
-    camera.zoom = Math.max(MIN_CAMERA_ZOOM, Math.min(MAX_CAMERA_ZOOM, options.zoom));
+const CLICK_UPGRADES_STORAGE_KEY = 'bitdominion_click_upgrades';
+
+function loadPersistentClickUpgrades(): ItemId[] {
+  try {
+    const raw = window.localStorage.getItem(CLICK_UPGRADES_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((value: unknown): value is ItemId =>
+      typeof value === 'string' && value in ITEM_DEFINITIONS
+    );
+  } catch (error) {
+    console.warn('Unable to load click modifiers from storage', error);
+    return [];
   }
-  const { x, y } = game.knight.pos;
-  camera.center.x = x;
-  camera.center.y = y;
-  clampCamera();
 }
 
-focusCameraOnKnight({ zoom: INITIAL_CAMERA_ZOOM });
+function savePersistentClickUpgrades(ids: Iterable<ItemId>): void {
+  try {
+    const unique = Array.from(new Set(ids));
+    window.localStorage.setItem(CLICK_UPGRADES_STORAGE_KEY, JSON.stringify(unique));
+  } catch (error) {
+    console.warn('Unable to persist click modifiers', error);
+  }
+}
+
+const persistentClickItems = new Set<ItemId>(loadPersistentClickUpgrades());
+game.setPersistentItems([...persistentClickItems]);
+
+let isoTransform = createIsoTransform(canvas.width, canvas.height);
+
+function updateIsoProjection(): void {
+  isoTransform = createIsoTransform(canvas.width, canvas.height);
+}
+
+updateIsoProjection();
 
 const tooltipPanel = requireElement<HTMLDivElement>('#tooltipPanel');
 const inventoryPanel = requireElement<HTMLDivElement>('#inventoryPanel');
@@ -1009,10 +981,10 @@ function openItemDetail(itemId: ItemId, options?: ItemDetailOptions): void {
   }
 
   itemDetailTips.innerHTML = '';
-  if (definition.buildPaths.length) {
-    for (const tip of definition.buildPaths) {
+  if (definition.stats.length) {
+    for (const stat of definition.stats) {
       const li = document.createElement('li');
-      li.textContent = tip;
+      li.textContent = stat;
       itemDetailTips.appendChild(li);
     }
     itemDetailTipsSection.classList.remove('hidden');
@@ -1729,7 +1701,12 @@ function populateItemShop(): void {
     const definition = ITEM_DEFINITIONS[itemId];
     const button = document.createElement('button');
     button.className = 'shop-button';
-    const label = document.createElement('span');
+    button.type = 'button';
+    const content = document.createElement('div');
+    content.className = 'shop-button-content';
+    const header = document.createElement('div');
+    header.className = 'shop-item-header';
+    const label = document.createElement('div');
     label.className = 'shop-button-label';
     const icon = document.createElement('span');
     icon.className = 'shop-item-icon';
@@ -1743,9 +1720,26 @@ function populateItemShop(): void {
     label.append(icon, name);
     const price = document.createElement('span');
     price.className = 'price';
-    button.append(label, price);
+    header.append(label, price);
+    content.append(header);
+
+    if (definition.stats.length) {
+      const statsList = document.createElement('ul');
+      statsList.className = 'shop-item-stats';
+      for (const stat of definition.stats) {
+        const li = document.createElement('li');
+        li.textContent = stat;
+        statsList.appendChild(li);
+      }
+      content.append(statsList);
+    }
+
+    button.append(content);
     button.addEventListener('click', () => {
       if (game.purchaseItem(itemId)) {
+        persistentClickItems.add(itemId);
+        game.addPersistentItem(itemId);
+        savePersistentClickUpgrades(persistentClickItems);
         updateItemShopButtons();
       }
     });
@@ -1866,8 +1860,7 @@ function renderCamps(): void {
         : `${remaining} foes remain • ${camp.rewardSupplies} gold & ${camp.rewardRelicShards} ${shardLabel}`;
     }
 
-    const screenX = (camp.position.x - camera.center.x) * camera.zoom + canvas.width / 2;
-    const screenY = (camp.position.y - camera.center.y) * camera.zoom + canvas.height / 2;
+    const { x: screenX, y: screenY } = isoWorldToScreen(camp.position.x, camp.position.y, isoTransform);
 
     const cssX = offsetX + screenX * scaleX;
     const cssY = offsetY + screenY * scaleY;
@@ -1877,7 +1870,8 @@ function renderCamps(): void {
     const highlighted = highlightedCampIds.has(camp.id) && !camp.cleared;
     if (highlighted) {
       marker.classList.add('highlighted');
-      const radiusOffset = camp.radius * camera.zoom * scaleY + 12;
+      const { dy } = isoProjectRadius(camp.position, camp.radius, isoTransform);
+      const radiusOffset = Math.max(0, dy * scaleY) + 12;
       marker.style.transform = `translate(-50%, -100%) translateY(-${radiusOffset}px)`;
     } else {
       marker.classList.remove('highlighted');
@@ -2160,15 +2154,9 @@ const getCanvasPixelCoords = (event: CanvasInteractionEvent) => {
   return { x, y };
 };
 
-const screenToWorld = (x: number, y: number) => {
-  const worldX = (x - canvas.width / 2) / camera.zoom + camera.center.x;
-  const worldY = (y - canvas.height / 2) / camera.zoom + camera.center.y;
-  return { x: worldX, y: worldY };
-};
-
 const toWorldCoords = (event: PointerEvent) => {
   const { x, y } = getCanvasPixelCoords(event);
-  const { x: worldX, y: worldY } = screenToWorld(x, y);
+  const { x: worldX, y: worldY } = isoScreenToWorld(x, y, isoTransform);
   return {
     x: Math.max(0, Math.min(WIDTH, worldX)),
     y: Math.max(0, Math.min(HEIGHT, worldY))
@@ -2196,30 +2184,6 @@ canvas.addEventListener('pointermove', (event) => {
   const { x, y } = toWorldCoords(event);
   game.onPointerMove(x, y);
 });
-
-canvas.addEventListener(
-  'wheel',
-  (event) => {
-    event.preventDefault();
-    const { x, y } = getCanvasPixelCoords(event);
-    const focus = screenToWorld(x, y);
-    const zoomFactor = Math.exp(-event.deltaY * 0.001);
-    const nextZoom = Math.max(MIN_CAMERA_ZOOM, Math.min(MAX_CAMERA_ZOOM, camera.zoom * zoomFactor));
-    if (nextZoom === camera.zoom) {
-      return;
-    }
-
-    camera.zoom = nextZoom;
-
-    const offsetX = x - canvas.width / 2;
-    const offsetY = y - canvas.height / 2;
-    camera.center.x = focus.x - offsetX / camera.zoom;
-    camera.center.y = focus.y - offsetY / camera.zoom;
-
-    clampCamera();
-  },
-  { passive: false }
-);
 
 canvas.addEventListener('contextmenu', (event) => {
   event.preventDefault();
@@ -2341,12 +2305,9 @@ window.addEventListener('keydown', (event) => {
   }
 
   const key = event.key.toLowerCase();
-  const code = event.code;
   if (key === 'r') {
     game.reset();
     game.setCanvasHudEnabled(false);
-    focusCameraOnKnight({ zoom: INITIAL_CAMERA_ZOOM });
-    cameraPan.up = cameraPan.down = cameraPan.left = cameraPan.right = false;
     updateInventory();
     updateBuildingShopButtons();
     setItemShopOpen(false);
@@ -2387,42 +2348,8 @@ window.addEventListener('keydown', (event) => {
     setQuestLogOpen(!isQuestLogOpen);
   } else if (key === 'c') {
     game.toggleCanopy();
-  } else if (code === 'Space') {
-    event.preventDefault();
-    focusCameraOnKnight();
-  } else if (code === 'KeyW') {
-    event.preventDefault();
-    cameraPan.up = true;
-  } else if (code === 'KeyS') {
-    event.preventDefault();
-    cameraPan.down = true;
-  } else if (code === 'KeyA') {
-    event.preventDefault();
-    cameraPan.left = true;
-  } else if (code === 'KeyD') {
-    event.preventDefault();
-    cameraPan.right = true;
   } else if (key === 'x') {
     game.startDismantle();
-  }
-});
-
-window.addEventListener('keyup', (event) => {
-  switch (event.code) {
-    case 'KeyW':
-      cameraPan.up = false;
-      break;
-    case 'KeyS':
-      cameraPan.down = false;
-      break;
-    case 'KeyA':
-      cameraPan.left = false;
-      break;
-    case 'KeyD':
-      cameraPan.right = false;
-      break;
-    default:
-      break;
   }
 });
 
@@ -2564,16 +2491,12 @@ function frame(now: number) {
   lastTime = now;
   const dt = Math.min(elapsed / 1000, 0.2);
   if (!tutorialPaused) {
-    updateCameraPosition(dt);
     game.update(dt);
-  } else {
-    updateCameraPosition(0);
   }
   const cameraState: CameraState = {
-    center: camera.center,
-    zoom: camera.zoom,
     viewportWidth: canvas.width,
-    viewportHeight: canvas.height
+    viewportHeight: canvas.height,
+    iso: isoTransform
   };
   game.draw(ctx, cameraState);
   updateHud();
