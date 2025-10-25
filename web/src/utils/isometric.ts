@@ -49,7 +49,9 @@ const ISO_BOUNDS = computeIsoBounds();
 export function createIsoTransform(viewportWidth: number, viewportHeight: number): IsoTransform {
   const isoWidth = ISO_BOUNDS.maxX - ISO_BOUNDS.minX;
   const isoHeight = ISO_BOUNDS.maxY - ISO_BOUNDS.minY;
-  const scale = Math.min(viewportWidth / isoWidth, viewportHeight / isoHeight);
+  const baseScale = Math.min(WIDTH / isoWidth, HEIGHT / isoHeight);
+  const maxScale = Math.min(viewportWidth / isoWidth, viewportHeight / isoHeight);
+  const scale = Math.min(baseScale, maxScale);
   const offsetX = (viewportWidth - isoWidth * scale) / 2 - ISO_BOUNDS.minX * scale;
   const offsetY = (viewportHeight - isoHeight * scale) / 2 - ISO_BOUNDS.minY * scale;
   return {

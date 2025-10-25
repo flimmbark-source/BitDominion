@@ -1,14 +1,7 @@
 import './style.css';
 import { Game, CameraState, NearbyQuestInteraction, QuestLogEntry } from './game';
 import type { ClickLoadout, ClickModifierId } from './game/items/ClickModifiers';
-import {
-  HEIGHT,
-  WIDTH,
-  VIEWPORT_HEIGHT,
-  KNIGHT_HP,
-  BuildingType,
-  DOWNTIME_DURATION
-} from './config/constants';
+import { HEIGHT, WIDTH, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, BuildingType, DOWNTIME_DURATION } from './config/constants';
 import { getBuildingDefinition } from './entities/building';
 import { ITEM_DEFINITIONS, ITEM_ORDER, ItemId, WeaponItemId } from './config/items';
 import {
@@ -325,26 +318,19 @@ appRootElement.innerHTML = `
                 <span class="stat-value" id="heroShardText">0</span>
                 <span class="resource-gain" id="heroShardGain" aria-live="polite"></span>
               </div>
-              <div class="stat-row">
-                <span class="stat-label health">Health</span>
-                <div class="health-bar">
-                  <div class="health-bar-fill" id="heroHealthBar"></div>
-                </div>
-                <span class="health-text" id="heroHealthText">${KNIGHT_HP}/${KNIGHT_HP}</span>
-              </div>
             </div>
           </div>
           <div class="hud-section hud-section--center">
             <div class="hud-center-row">
-              <button class="ui-panel build-toggle" id="buildPrompt" type="button">
-                <span class="build-toggle-icon" aria-hidden="true">🔨</span>
-                <span class="build-toggle-text">(B)uild</span>
-              </button>
               <div class="ui-panel inventory" id="inventoryPanel"></div>
             </div>
             <div class="build-feedback" id="buildErrorMessage" role="status" aria-live="polite"></div>
           </div>
           <div class="hud-section hud-section--right">
+            <button class="ui-panel build-toggle" id="buildPrompt" type="button">
+              <span class="build-toggle-icon" aria-hidden="true">🔨</span>
+              <span class="build-toggle-text">(B)uild</span>
+            </button>
             <div class="ui-panel buffs-panel" id="buffsPanel">
               <div class="buffs-title">Temporary Blessings</div>
               <ul class="buffs-list" id="buffList"></ul>
@@ -518,7 +504,7 @@ appRootElement.innerHTML = `
 `;
 
 const canvas = requireElement<HTMLCanvasElement>('#gameCanvas');
-canvas.width = WIDTH;
+canvas.width = VIEWPORT_WIDTH;
 canvas.height = VIEWPORT_HEIGHT;
 
 const context = canvas.getContext('2d');
@@ -534,7 +520,7 @@ function updateGameViewportSize(): void {
   const paddingY = parseFloat(appStyles.paddingTop) + parseFloat(appStyles.paddingBottom);
   const availableWidth = Math.max(0, window.innerWidth - paddingX);
   const availableHeight = Math.max(0, window.innerHeight - paddingY - GAME_SHELL_GAP);
-  const aspectRatio = WIDTH / VIEWPORT_HEIGHT;
+  const aspectRatio = VIEWPORT_WIDTH / VIEWPORT_HEIGHT;
 
   let targetWidth = availableWidth;
   let targetHeight = targetWidth / aspectRatio;
@@ -613,8 +599,6 @@ const heroGoldText = requireElement<HTMLSpanElement>('#heroGoldText');
 const heroGoldGain = requireElement<HTMLSpanElement>('#heroGoldGain');
 const heroShardText = requireElement<HTMLSpanElement>('#heroShardText');
 const heroShardGain = requireElement<HTMLSpanElement>('#heroShardGain');
-const heroHealthBar = requireElement<HTMLDivElement>('#heroHealthBar');
-const heroHealthText = requireElement<HTMLSpanElement>('#heroHealthText');
 const buildPrompt = requireElement<HTMLButtonElement>('#buildPrompt');
 const buildErrorMessage = requireElement<HTMLDivElement>('#buildErrorMessage');
 const darkEnergyFill = requireElement<HTMLDivElement>('#darkEnergyFill');
@@ -1576,6 +1560,7 @@ let lastVillageStatusHash = '';
 let tavernAutoOpen = false;
 let isQuestLogOpen = false;
 let activeQuestDialog: NearbyQuestInteraction | null = null;
+let questDialogPinned = false;
 const dismissedQuestInteractions = new Set<number>();
 let lastQuestInteractionGiverId: number | null = null;
 let isBuildLedgerOpen = false;
@@ -2223,6 +2208,7 @@ function showQuestDialog(interaction: NearbyQuestInteraction): void {
 }
 
 function hideQuestDialog(): void {
+  questDialogPinned = false;
   if (questDialogElement.classList.contains('hidden')) {
     activeQuestDialog = null;
     return;
@@ -2233,6 +2219,21 @@ function hideQuestDialog(): void {
 }
 
 function updateQuestDialog(): void {
+  if (questDialogPinned) {
+    if (!activeQuestDialog) {
+      questDialogPinned = false;
+      return;
+    }
+    const refreshed = game.getQuestInteractionForGiver(activeQuestDialog.giverId);
+    if (!refreshed || (refreshed.state === 'waiting' && !refreshed.offer && !refreshed.activeQuest)) {
+      hideQuestDialog();
+      return;
+    }
+    showQuestDialog(refreshed);
+    questDialogPinned = true;
+    return;
+  }
+
   const interaction = game.getNearbyQuestInteraction();
   const relevant = interaction && (interaction.state === 'offering' || interaction.state === 'turnIn');
   if (!relevant) {
@@ -2326,6 +2327,20 @@ canvas.addEventListener('pointerdown', (event) => {
   const { x, y } = toWorldCoords(event);
   if (event.button === 2) {
     event.preventDefault();
+  }
+  if (event.button === 0 && !game.isBuildModeActive()) {
+    const questInteraction = game.getQuestInteractionAtPosition(x, y);
+    if (questInteraction) {
+      dismissedQuestInteractions.delete(questInteraction.giverId);
+      lastQuestInteractionGiverId = questInteraction.giverId;
+      showQuestDialog(questInteraction);
+      questDialogPinned = true;
+      return;
+    }
+    if (game.isPointInsideTavern(x, y)) {
+      setItemShopOpen(true);
+      return;
+    }
   }
   const buildingCountBefore = game.getBuildings().length;
   const wasBuildModeActive = game.isBuildModeActive();
@@ -2536,11 +2551,6 @@ function updateHud() {
     }
     refreshMetaUpgradeButtons();
   }
-  const hp = Math.max(0, game.knight.hp);
-  const hpRatio = Math.max(0, Math.min(1, hp / KNIGHT_HP));
-  heroHealthBar.style.width = `${hpRatio * 100}%`;
-  heroHealthText.textContent = `${Math.ceil(hp)}/${KNIGHT_HP}`;
-
   const kills = game.getTotalKills();
   if (
     kills > lastKillCount &&

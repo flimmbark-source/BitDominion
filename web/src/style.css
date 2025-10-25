@@ -3,7 +3,7 @@
 :root {
   color-scheme: dark;
   --game-min-size: 320px;
-  --game-max-size: 1600px;
+  --game-max-size: 2200px;
   --game-vertical-padding: 24px;
 }
 
@@ -359,12 +359,18 @@ body {
   pointer-events: none;
 }
 
-.hud-section--left,
-.hud-section--right {
+.hud-section--left {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.hud-section--right {
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 12px;
 }
 
 .hud-section--center {
@@ -397,10 +403,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.hud-section--center .build-toggle {
-  align-self: center;
 }
 
 .hud-section--center .build-feedback {
