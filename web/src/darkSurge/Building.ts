@@ -44,6 +44,17 @@ export class Building {
     return this.hp;
   }
 
+  getMaxHp(): number {
+    return this.maxHp;
+  }
+
+  getMissingHp(): number {
+    if (this.destroyed) {
+      return 0;
+    }
+    return Math.max(0, this.maxHp - this.hp);
+  }
+
   isBurning(): boolean {
     return this.burning && !this.destroyed;
   }
@@ -106,6 +117,22 @@ export class Building {
     if (this.destroyCallback) {
       this.destroyCallback(this);
     }
+  }
+
+  repairToFull(): number {
+    if (this.destroyed) {
+      return 0;
+    }
+    const missing = this.getMissingHp();
+    if (missing <= 0) {
+      this.damageMemory = 0;
+      this.burning = false;
+      return 0;
+    }
+    this.hp = this.maxHp;
+    this.damageMemory = 0;
+    this.burning = false;
+    return missing;
   }
 
   beginDowntime(repairFraction: number): void {

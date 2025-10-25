@@ -380,7 +380,7 @@ export class DarkUnit {
     }
 
     if (target === 'knight') {
-      knight.hp = Math.max(0, knight.hp - stats.attackDamage);
+      // Knight no longer takes direct damage from enemy attacks.
     } else if (villagerTarget) {
       world.damageVillager(villagerTarget, stats.attackDamage);
     }

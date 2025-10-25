@@ -26,8 +26,6 @@ import {
   HP_BAR_WIDTH,
   HUD_COLOR,
   KNIGHT_BOW_NOISE,
-  CLICK_BASE_DAMAGE,
-  CLICK_TARGET_RADIUS,
   CLICK_NOISE_STRENGTH,
   AUTO_CLICK_NOISE_STRENGTH,
   KNIGHT_HP,
@@ -35,7 +33,6 @@ import {
   LURE_BEACON_NOISE_INTERVAL,
   LURE_BEACON_NOISE_STRENGTH,
   MAX_UNITS,
-  NOISE_ATTACK_STRENGTH,
   NOISE_PING_DURATION,
   NOISE_PING_MAX_RADIUS,
   NOISE_PING_MIN_RADIUS,
@@ -75,8 +72,6 @@ import {
   WIDTH,
   WORKSHOP_AURA_RADIUS,
   HUT_STEER_STRENGTH,
-  DOWNTIME_DURATION,
-  WAVE_DURATION,
   QUEST_RADIUS,
   QUEST_REWARD_SUPPLIES,
   QUEST_REWARD_BUFF_MULTIPLIER,
@@ -119,6 +114,7 @@ import {
 } from './config/constants';
 import { DarkLordAI } from './ai/darkLordAI';
 import { DarkUnit, DarkUnitAllegiance } from './entities/darkUnit';
+import { Config } from './config/config';
 import {
   BuildingInstance,
   createBuilding,
@@ -127,7 +123,6 @@ import {
   isKnightWithinConstructionRange
 } from './entities/building';
 import { Knight } from './entities/knight';
-import { ClickModifierSystem, type ClickHitContext } from './entities/clickModifiers';
 import { Seal } from './entities/seal';
 import { Vector2 } from './math/vector2';
 import { World } from './world';
@@ -138,14 +133,18 @@ import {
   getMetaUpgradeDefinition
 } from './config/metaProgression';
 import { IsoTransform } from './utils/isometric';
-import waveConfigData from './darkSurge/WaveConfig.json';
-import {
-  WaveController,
-  type WaveConfig,
-  type WaveSpawnRequest
-} from './darkSurge/WaveController';
-import { EnemySwarm } from './darkSurge/EnemySwarm';
+import { WaveController, type SwarmSpawnRequest } from './game/waves/WaveController';
+import { ClickCombat, type ClickHitContext } from './game/combat/ClickCombat';
+import { EnemySwarm } from './game/enemies/EnemySwarm';
 import { Village as SurgeVillage, type VillageAttackEvent } from './darkSurge/Village';
+import {
+  combineClickModifiers,
+  createEmptyClickLoadout,
+  type ClickLoadout,
+  type ClickModifierEffect
+} from './game/items/ClickModifiers';
+import { Economy } from './game/economy/Economy';
+import { QuestSystem, type QuestHudInfo } from './game/quests/QuestSystem';
 
 export interface CameraState {
   viewportWidth: number;
@@ -248,11 +247,29 @@ interface DeathParticle {
 
 type GamePhase = 'downtime' | 'wave';
 type QuestType = 'escort' | 'retrieve';
+type ClickTarget = DarkUnit | EnemySwarm;
+
+export interface VillageSummary {
+  id: number;
+  label: string;
+  hp: number;
+  maxHp: number;
+  population: number;
+  maxPopulation: number;
+  destroyed: boolean;
+  underAttack: boolean;
+  repairCost: number;
+}
 
 const QUEST_INTERACTION_RADIUS = 96;
 const CREEP_APPROACH_BUFFER = 80;
 const BUILD_PREVIEW_TILE_SIZE = 12;
 const ISO_CASTLE_SCALE = 1.6;
+const VILLAGE_IGNITE_THRESHOLD = 55;
+const VILLAGE_BURN_DPS = 10;
+const VILLAGE_COLLAPSE_DELAY = 4.5;
+const VILLAGE_INCOME_PER_BUILDING = 35;
+const VILLAGE_REPAIR_FRACTION = 0.35;
 
 function rectanglesOverlap(
   leftA: number,
@@ -511,10 +528,11 @@ export class Game {
   private ownedItems: Set<ItemId> = new Set();
   private weaponStates: Map<ItemId, WeaponRuntimeState> = new Map();
   private supportItems: Set<ItemId> = new Set();
-  private clickModifiers: ClickModifierSystem;
+  private clickLoadout: ClickLoadout = createEmptyClickLoadout();
+  private clickCombat!: ClickCombat;
   private persistentItemIds: Set<ItemId> = new Set();
   private phase: GamePhase = 'downtime';
-  private phaseTimer = DOWNTIME_DURATION;
+  private phaseTimer = Config.waves.prepWindowMs / 1000;
   private waveIndex = 0;
   private quests: Quest[] = [];
   private creepCamps: CreepCamp[] = [];
@@ -550,38 +568,60 @@ export class Game {
   private knightInTavern = false;
   private nearbyCreepCampIds: Set<number> = new Set();
   private noiseListener: ((strength: number) => void) | null = null;
-  private readonly waveConfig: WaveConfig = waveConfigData as WaveConfig;
   private waveController!: WaveController;
   private surgeVillages: SurgeVillage[] = [];
   private surgeEnemies: EnemySwarm[] = [];
   private surgeEnemyPool: EnemySwarm[] = [];
   private surgeEnemyIdCounter = 1;
   private villageAudioContext: AudioContext | null = null;
+  private screenShakeTimer = 0;
+  private screenShakeStrength = 0;
+  private screenShakeOffset = new Vector2();
+  private readonly screenShakeDuration = 0.15;
+  private economy: Economy;
+  private downtimeQuests: QuestSystem;
 
   constructor() {
     this.world = new World();
+    this.economy = new Economy({
+      getGold: () => this.supplies,
+      addGold: (amount) => this._addSupplies(amount),
+      spendGold: (amount) => this._spendSupplies(amount)
+    });
+    this.downtimeQuests = new QuestSystem({
+      grantGold: (amount) => this._addSupplies(amount),
+      onProgress: (position, amount) =>
+        this._spawnDamageNumber(position, amount, { color: '#bef264', lifespanMs: 500 }),
+      onReward: (amount) =>
+        this._spawnDamageNumber(CASTLE_POS.clone(), amount, {
+          color: '#facc15',
+          emphasis: true,
+          lifespanMs: Config.click.dmgTextLifespanMs
+        })
+    });
+    this.downtimeQuests.reset();
     this._initializeDarkSurgeState();
     this.anchors = this._generateAnchors();
     this.seals = this._generateSeals();
     this.shieldWasActive = this._isShieldActive();
-    this.clickModifiers = new ClickModifierSystem(
-      {
-        findPrimaryTarget: (position, radius) => this._findNearestUnitToPoint(position, radius),
-        findUnitsInRadius: (position, radius) => this._findUnitsInRadius(position, radius),
-        getRandomTarget: () => this._getRandomAliveUnit(),
-        baseDamage: () => this._getClickDamage(),
-        onHit: (target, damage, context) => this._handleClickHit(target, damage, context),
-        emitNoise: (position, strength) => this._emitNoise(position, strength)
-      },
-      {
-        manualNoise: CLICK_NOISE_STRENGTH,
-        autoNoise: AUTO_CLICK_NOISE_STRENGTH,
-        targetRadius: CLICK_TARGET_RADIUS
-      }
-    );
+    this.clickCombat = new ClickCombat({
+      getAliveEnemies: () => this._getAllClickTargets(),
+      findUnitsInRadius: (position, radius) => this._findUnitsInRadius(position, radius),
+      getRandomTarget: () => this._getRandomAliveUnit(),
+      applyHit: (target, damage, context) => this._handleClickHit(target, damage, context),
+      baseDamage: () => this._getClickDamage(),
+      emitNoise: (position, strength) => this._emitNoise(position, strength),
+      manualNoise: CLICK_NOISE_STRENGTH,
+      autoNoise: AUTO_CLICK_NOISE_STRENGTH
+    });
+    this.clickCombat.setLoadout(this.clickLoadout);
     this.world.setBuildingObstacles([]);
     this._initializeQuestGivers();
     this._initializeKnightLoadout();
+    this.clickCombat.reset();
+    this.screenShakeTimer = 0;
+    this.screenShakeStrength = 0;
+    this.screenShakeOffset.set(0, 0);
     this._enterDowntime();
   }
 
@@ -589,10 +629,12 @@ export class Game {
     this.knight = new Knight();
     this.units = [];
     this.darkLord = new DarkLordAI();
+    this.clickCombat.reset();
     this.seals = this._generateSeals();
     this.brokenSeals = 0;
     this.state = 'running';
     this.world = new World();
+    this.downtimeQuests.reset();
     this._initializeDarkSurgeState();
     this.anchors = this._generateAnchors();
     this.nextAnchorIndex = 0;
@@ -624,7 +666,7 @@ export class Game {
     this.weaponStates.clear();
     this.supportItems.clear();
     this.phase = 'downtime';
-    this.phaseTimer = DOWNTIME_DURATION;
+    this.phaseTimer = Config.waves.prepWindowMs / 1000;
     this.waveIndex = 0;
     this.quests = [];
     this.creepCamps = [];
@@ -667,8 +709,34 @@ export class Game {
     return this.supplies;
   }
 
+  getVillageSummaries(): VillageSummary[] {
+    return this.surgeVillages.map((village, index) => ({
+      id: village.id,
+      label: `Village ${index + 1}`,
+      hp: Math.round(village.getStructuralHp()),
+      maxHp: village.getStructuralMaxHp(),
+      population: village.getPopulation(),
+      maxPopulation: village.getMaxPopulation(),
+      destroyed: village.isDestroyed(),
+      underAttack: village.getUnderAttackIntensity() > 0,
+      repairCost: this.economy.getVillageRepairCost(village)
+    }));
+  }
+
+  getDowntimeQuestHud(): QuestHudInfo | null {
+    return this.downtimeQuests.getHudInfo();
+  }
+
   getOwnedItems(): ItemId[] {
     return Array.from(this.ownedItems);
+  }
+
+  getClickLoadout(): ClickLoadout {
+    return this.clickLoadout;
+  }
+
+  getClickDamage(): number {
+    return this._getClickDamage();
   }
 
   setPersistentItems(items: ItemId[]): void {
@@ -951,7 +1019,9 @@ export class Game {
   }
 
   getPhaseTimerInfo(): { phase: GamePhase; remaining: number; duration: number; waveIndex: number } {
-    const duration = this.phase === 'downtime' ? DOWNTIME_DURATION : WAVE_DURATION;
+    const duration = this.phase === 'downtime'
+      ? Config.waves.prepWindowMs / 1000
+      : this.waveController?.getActiveSwarmCount() ?? 0;
     return { phase: this.phase, remaining: this.phaseTimer, duration, waveIndex: this.waveIndex };
   }
 
@@ -979,6 +1049,25 @@ export class Game {
     }
     this.supplies -= definition.cost;
     this._grantItem(itemId);
+    return true;
+  }
+
+  repairVillage(villageId: number): boolean {
+    if (!this.isDowntime()) {
+      return false;
+    }
+    const village = this.surgeVillages.find((entry) => entry.id === villageId) ?? null;
+    if (!village || village.isDestroyed()) {
+      return false;
+    }
+    const result = this.economy.tryRepairVillage(village);
+    if (!result) {
+      return false;
+    }
+    this._spawnDamageNumber(village.center.clone(), result.restoredHp, {
+      color: '#bae6fd',
+      lifespanMs: 750
+    });
     return true;
   }
 
@@ -1224,7 +1313,6 @@ export class Game {
     if (this.buildMode) {
       if (button === 0) {
         if (this._tryPlaceBuilding(point)) {
-          this.knight.setTarget(point.clone());
           if (typeof timeSeconds === 'number') {
             this.lastPointerTime = timeSeconds;
           } else {
@@ -1258,8 +1346,24 @@ export class Game {
       this._emitNoise(point, NOISE_SPRINT_STRENGTH);
     }
 
-    this.knight.setTarget(point.clone());
-    this.clickModifiers.handleClick(point.clone());
+    if (this.downtimeQuests.handlePointerDown(point.clone())) {
+      if (typeof timeSeconds === 'number') {
+        this.lastPointerTime = timeSeconds;
+      } else {
+        this.lastPointerTime = 0;
+      }
+      this.lastPointerPos = point.clone();
+      return;
+    }
+
+    const attackTriggered = this.clickCombat.handlePointerDown(point.clone());
+    if (!attackTriggered) {
+      if (typeof timeSeconds !== 'number') {
+        this.lastPointerTime = 0;
+      }
+      this.lastPointerPos = point.clone();
+      return;
+    }
 
     if (typeof timeSeconds === 'number') {
       this.lastPointerTime = timeSeconds;
@@ -1336,6 +1440,8 @@ export class Game {
 
   update(dt: number): void {
     this.world.beginFrame(dt);
+    this.clickCombat.update(dt);
+    this._updateScreenShake(dt);
     this._updateVillageStates(dt);
     if (this.buildErrorTimer > 0) {
       this.buildErrorTimer = Math.max(0, this.buildErrorTimer - dt);
@@ -1360,6 +1466,7 @@ export class Game {
     }
 
     this._updatePhase(dt);
+    this.downtimeQuests.update(dt);
     this._updateSupplies(dt);
     this.knight.update(dt, this.world);
     this._updateTavernState();
@@ -1376,7 +1483,6 @@ export class Game {
     this._updateSurgeSystems(dt);
 
     this._updateWeapons(dt);
-    this.clickModifiers.update(dt);
     this._pruneDeadUnits();
 
     this._updateBuildings(dt);
@@ -1396,37 +1502,6 @@ export class Game {
       onChestOpened: (position) => this._onChestOpened(position)
     });
 
-    if (this.knight.hp <= 0) {
-      this.state = 'defeat';
-      return;
-    }
-
-    const hits = this.knight.tryAttack(this.units);
-    if (hits.length) {
-      const meleeDamage = this.knight.getMeleeDamage(1 + this.weaponDamageBonus);
-      if (meleeDamage > 0) {
-        let kills = 0;
-        for (const unit of hits) {
-          const wasAlive = unit.alive;
-          const preHp = unit.hp;
-          const died = unit.receiveArcHit(this.knight, meleeDamage);
-          const damageDealt = Math.max(0, preHp - unit.hp);
-          if (damageDealt > 0) {
-            this._spawnHitFlash(unit.pos, unit.getCollisionRadius(), { strong: !unit.alive });
-            this._spawnDamageNumber(unit.pos, damageDealt, { emphasis: !unit.alive });
-          }
-          if (wasAlive && died) {
-            kills += 1;
-            this._onUnitKilled(unit);
-          }
-        }
-        if (kills > 0) {
-          this._emitNoise(this.knight.pos, NOISE_ATTACK_STRENGTH);
-        }
-        this._pruneDeadUnits();
-      }
-    }
-
     this.darkLord.update(dt, this);
 
     this._updateAnchors(dt);
@@ -1439,10 +1514,9 @@ export class Game {
       return;
     }
     this.waveController.update(dt, {
-      activeEnemies: this.surgeEnemies.length,
-      canSpawn: () => this.surgeEnemies.length < this.waveController.getMaxActive(),
-      spawn: (request: WaveSpawnRequest) => this._spawnSurgeEnemy(request),
-      onWaveComplete: () => this._onSurgeWaveCleared()
+      spawnSwarm: (request) => this._spawnSurgeEnemy(request),
+      onWaveStart: (waveIndex) => this._onWaveStarted(waveIndex),
+      onWaveComplete: (waveIndex) => this._onSurgeWaveCleared(waveIndex)
     });
 
     if (!this.surgeEnemies.length) {
@@ -1461,6 +1535,7 @@ export class Game {
         survivors.push(enemy);
       } else {
         this.surgeEnemyPool.push(enemy);
+        this.waveController.notifySwarmDestroyed();
       }
     }
     this.surgeEnemies = survivors;
@@ -1475,9 +1550,14 @@ export class Game {
     }
   }
 
-  private _spawnSurgeEnemy(request: WaveSpawnRequest): void {
+  private _spawnSurgeEnemy(request: SwarmSpawnRequest): void {
     const enemy = this.surgeEnemyPool.pop() ?? new EnemySwarm(this.surgeEnemyIdCounter++);
-    enemy.reset(request.position.clone(), request.stats);
+    enemy.reset({
+      position: request.spawnPosition.clone(),
+      stats: request.stats,
+      memberCount: request.memberCount,
+      heading: request.heading
+    });
     this.surgeEnemies.push(enemy);
   }
 
@@ -1491,6 +1571,12 @@ export class Game {
     this._spawnHitFlash(village.center, radius, { strong: false });
     if (event.destroyedBuilding) {
       this._spawnHitFlash(event.destroyedBuilding.position, 18, { strong: true });
+    }
+    if (event.focus === 'villagers' && event.villagersLost > 0) {
+      this._spawnDamageNumber(village.center, -event.villagersLost, {
+        emphasis: true,
+        color: '#fecaca'
+      });
     }
   }
 
@@ -1522,8 +1608,12 @@ export class Game {
     this._spawnDamageNumber(CASTLE_POS.clone(), amount, { emphasis: true, color: '#F8E27A' });
   }
 
-  private _onSurgeWaveCleared(): void {
-    // Placeholder for future hooks such as achievements or notifications.
+  private _onWaveStarted(waveIndex: number): void {
+    this._startWave(waveIndex);
+  }
+
+  private _onSurgeWaveCleared(_waveIndex: number): void {
+    this._enterDowntime();
   }
 
   private _playVillageAlarm(_position: Vector2): void {
@@ -1572,6 +1662,8 @@ export class Game {
       iso.offsetY
     );
 
+    ctx.translate(this.screenShakeOffset.x, this.screenShakeOffset.y);
+
     ctx.fillStyle = BACKGROUND_COLOR;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
@@ -1600,15 +1692,16 @@ export class Game {
     this._drawWeaponOrbits(ctx);
 
     this.knight.draw(ctx);
-    this.knight.drawSwing(ctx);
     this._drawDeathParticles(ctx);
     this._drawHitFlashes(ctx);
     this._drawDamageNumbers(ctx);
 
     this.world.drawCanopy(ctx);
+    this._drawVillageAlertRings(ctx);
     this.world.drawVillageAlarms(ctx);
     this._drawQuestObjectives(ctx);
     this._drawQuestMarkers(ctx);
+    this.downtimeQuests.draw(ctx);
     this._drawQuestGivers(ctx);
     this._drawNoisePings(ctx);
     this._drawBuildPreview(ctx);
@@ -1634,32 +1727,39 @@ export class Game {
 
   private _enterDowntime(): void {
     this.phase = 'downtime';
-    this.phaseTimer = this.waveController.getDowntimeDuration();
+    this.phaseTimer = this.waveController ? this.waveController.getStateTimer() : 0;
     this.weaponOrbitVisuals = [];
     this.smokeFields = [];
     this.waveRallyPoint = null;
     this.nearbyCreepCampIds.clear();
     this._generateDowntimeActivities();
-    this.waveController.beginDowntime();
     if (this.waveIndex > 0) {
       const income = this._collectVillageIncome();
+      let totalIncome = 0;
       if (income > 0) {
         this._addSupplies(income);
-        this._announceVillageIncome(income);
+        totalIncome += income;
+      }
+      const survivalBonus = this.economy.awardSurvivalBonus(this.surgeVillages);
+      totalIncome += survivalBonus;
+      if (totalIncome > 0) {
+        this._announceVillageIncome(totalIncome);
       }
     }
     for (const village of this.surgeVillages) {
       village.beginDowntime();
     }
+    this.downtimeQuests.beginDowntime(this.surgeVillages);
   }
 
-  private _startWave(): void {
-    if (this.phase === 'wave') {
+  private _startWave(waveIndex: number): void {
+    if (this.phase === 'wave' && this.waveIndex === waveIndex) {
       return;
     }
     this.phase = 'wave';
-    this.phaseTimer = WAVE_DURATION;
-    this.waveIndex += 1;
+    this.downtimeQuests.endDowntime();
+    this.phaseTimer = 0;
+    this.waveIndex = waveIndex;
     this.creepCamps = [];
     this.nearbyCreepCampIds.clear();
     this.weaponOrbitVisuals = [];
@@ -1667,28 +1767,22 @@ export class Game {
     this._expireTemporaryBuffs();
     this._removeRemainingWildUnits();
     this.waveRallyPoint = this._chooseWaveRallyPoint();
-    this.waveController.startWave(this.waveIndex);
     this.darkLord.beginWave(this, this.waveIndex);
   }
 
   private _updatePhase(dt: number): void {
-    if (this.phase === 'downtime') {
-      this.phaseTimer = Math.max(0, this.phaseTimer - dt);
+    if (!this.waveController) {
+      return;
+    }
+    const state = this.waveController.getState();
+    if (state === 'wave') {
+      this.phase = 'wave';
+      this.phaseTimer = this.waveController.getActiveSwarmCount();
+    } else {
+      this.phase = 'downtime';
+      this.phaseTimer = this.waveController.getStateTimer();
       this._updateQuests(dt);
       this._updateCreepCamps(dt);
-      if (this.phaseTimer <= 0) {
-        this._startWave();
-      }
-    } else {
-      this.phaseTimer = Math.max(0, this.phaseTimer - dt);
-      if (
-        this.phaseTimer <= 0 &&
-        this._countDarkUnits() === 0 &&
-        this._countSurgeEnemies() === 0 &&
-        !this.waveController.isWaveRunning()
-      ) {
-        this._enterDowntime();
-      }
     }
   }
 
@@ -2571,10 +2665,6 @@ export class Game {
     return count;
   }
 
-  private _countSurgeEnemies(): number {
-    return this.surgeEnemies.length;
-  }
-
   private _syncUnitLookup(): void {
     for (const [id, unit] of this.unitLookup) {
       if (!unit.alive) {
@@ -2636,41 +2726,41 @@ export class Game {
     return nearest;
   }
 
-  private _findNearestUnitToPoint(position: Vector2, radius: number): DarkUnit | null {
-    let nearest: DarkUnit | null = null;
-    let nearestDist = radius;
+  private _getAllClickTargets(): ClickTarget[] {
+    const targets: ClickTarget[] = [];
     for (const unit of this.units) {
-      if (!unit.alive) {
-        continue;
+      if (unit.alive) {
+        targets.push(unit);
       }
-      const distance = unit.pos.distanceTo(position);
-      if (distance > radius || distance >= nearestDist) {
-        continue;
-      }
-      nearest = unit;
-      nearestDist = distance;
     }
-    return nearest;
+    for (const swarm of this.surgeEnemies) {
+      if (swarm.alive) {
+        targets.push(swarm);
+      }
+    }
+    return targets;
   }
 
-  private _findUnitsInRadius(position: Vector2, radius: number): DarkUnit[] {
+  private _findUnitsInRadius(position: Vector2, radius: number): ClickTarget[] {
     if (radius <= 0) {
       return [];
     }
-    const results: DarkUnit[] = [];
+    const results: ClickTarget[] = [];
     for (const unit of this.units) {
-      if (!unit.alive) {
-        continue;
-      }
-      if (unit.pos.distanceTo(position) <= radius) {
+      if (unit.alive && unit.pos.distanceTo(position) <= radius) {
         results.push(unit);
+      }
+    }
+    for (const swarm of this.surgeEnemies) {
+      if (swarm.alive && swarm.pos.distanceTo(position) <= radius) {
+        results.push(swarm);
       }
     }
     return results;
   }
 
-  private _getRandomAliveUnit(): DarkUnit | null {
-    const alive = this.units.filter((unit) => unit.alive);
+  private _getRandomAliveUnit(): ClickTarget | null {
+    const alive = this._getAllClickTargets();
     if (!alive.length) {
       return null;
     }
@@ -2679,13 +2769,18 @@ export class Game {
   }
 
   private _getClickDamage(): number {
-    return CLICK_BASE_DAMAGE * (1 + this.weaponDamageBonus);
+    return Config.click.baseDamage * (1 + this.weaponDamageBonus);
   }
 
-  private _handleClickHit(target: DarkUnit, damage: number, context: ClickHitContext): void {
+  private _handleClickHit(target: ClickTarget, damage: number, context: ClickHitContext): void {
     if (!target.alive || damage <= 0) {
       return;
     }
+    if (target instanceof EnemySwarm) {
+      this._handleSwarmHit(target, damage, context);
+      return;
+    }
+
     const preHp = target.hp;
     target.takeDamage(damage);
     const dealt = Math.max(0, preHp - target.hp);
@@ -2694,18 +2789,46 @@ export class Game {
     }
     const strong = !target.alive;
     const color = context.crit ? '#fde68a' : undefined;
+    const lifespanMs = context.source === 'click' ? Config.click.dmgTextLifespanMs : undefined;
     this._spawnHitFlash(target.pos, target.getCollisionRadius(), { strong });
-    this._spawnDamageNumber(target.pos, dealt, { emphasis: context.crit || strong, color });
-    if (context.burn && target.alive) {
-      target.applyDot(context.burn.dps, context.burn.duration);
+    this._spawnDamageNumber(target.pos, dealt, {
+      emphasis: context.crit || strong,
+      color,
+      lifespanMs
+    });
+    if (context.source === 'click') {
+      this._addScreenshake(Config.click.screenshakeIntensity);
     }
-    if (context.freeze && target.alive) {
-      target.applySlow(context.freeze.factor, context.freeze.duration);
+    if (context.dot && target.alive) {
+      target.applyDot(context.dot.dps, context.dot.durationMs / 1000);
     }
     if (!target.alive) {
       this._onUnitKilled(target);
     }
     this._pruneDeadUnits();
+  }
+
+  private _handleSwarmHit(target: EnemySwarm, damage: number, context: ClickHitContext): void {
+    const preHp = target.getHp();
+    const killed = target.takeDamage(damage);
+    const dealt = Math.max(0, preHp - target.getHp());
+    if (dealt <= 0) {
+      return;
+    }
+    const color = context.crit ? '#fde68a' : undefined;
+    const lifespanMs = context.source === 'click' ? Config.click.dmgTextLifespanMs : undefined;
+    this._spawnHitFlash(target.pos, target.getCollisionRadius(), { strong: killed });
+    this._spawnDamageNumber(target.pos, dealt, {
+      emphasis: context.crit || killed,
+      color,
+      lifespanMs
+    });
+    if (context.source === 'click') {
+      this._addScreenshake(Config.click.screenshakeIntensity);
+    }
+    if (context.dot && target.alive) {
+      target.applyDot(context.dot.dps, context.dot.durationMs / 1000);
+    }
   }
 
   private _pruneDeadUnits(): void {
@@ -2973,6 +3096,26 @@ export class Game {
         ctx.arc(center.x, center.y, radius * (0.7 + collapse * 0.3), 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+    ctx.restore();
+  }
+
+  private _drawVillageAlertRings(ctx: CanvasRenderingContext2D): void {
+    if (!this.surgeVillages.length) {
+      return;
+    }
+    ctx.save();
+    for (const village of this.surgeVillages) {
+      const intensity = village.getUnderAttackIntensity();
+      if (intensity <= 0) {
+        continue;
+      }
+      const alpha = 0.25 + intensity * 0.5;
+      ctx.beginPath();
+      ctx.strokeStyle = `rgba(255, 90, 90, ${alpha.toFixed(3)})`;
+      ctx.lineWidth = 3;
+      ctx.arc(village.center.x, village.center.y, village.canopyRadius + 12, 0, Math.PI * 2);
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -3303,7 +3446,7 @@ export class Game {
   }
 
   private _initializeDarkSurgeState(): void {
-    this.waveController = new WaveController(this.waveConfig, { castlePosition: CASTLE_POS.clone() });
+    this.waveController = new WaveController({ castlePosition: CASTLE_POS.clone() });
     this.surgeEnemies = [];
     this.surgeEnemyPool = [];
     this.surgeEnemyIdCounter = 1;
@@ -3312,9 +3455,18 @@ export class Game {
 
   private _rebuildSurgeVillages(): void {
     const villages = Array.from(this.world.getVillages());
+    const villageConfig = {
+      buildingHp: Config.waves.buildingHP,
+      igniteThreshold: VILLAGE_IGNITE_THRESHOLD,
+      burnDamagePerSecond: VILLAGE_BURN_DPS,
+      collapseDelay: VILLAGE_COLLAPSE_DELAY,
+      incomePerBuilding: VILLAGE_INCOME_PER_BUILDING,
+      repairFraction: VILLAGE_REPAIR_FRACTION,
+      population: Config.waves.villagePopulation
+    } as const;
     this.surgeVillages = villages.map(
       (village, index) =>
-        new SurgeVillage(index + 1, village, this.waveConfig.village, (collapsed) =>
+        new SurgeVillage(index + 1, village, villageConfig, (collapsed) =>
           this._handleVillageCollapse(collapsed)
         )
     );
@@ -3331,7 +3483,8 @@ export class Game {
     this.knightProjectiles = [];
     this.knightProjectileIdCounter = 1;
     this.knight.setTemporarySpeedMultiplier(1);
-    this.clickModifiers.reset();
+    this.clickLoadout = createEmptyClickLoadout();
+    this.clickCombat.setLoadout(this.clickLoadout);
     this._grantItem('steelSword');
     this._applyPersistentItems();
   }
@@ -3348,9 +3501,22 @@ export class Game {
     }
   }
 
+  private _rebuildClickLoadout(): void {
+    const effects: ClickModifierEffect[] = [];
+    for (const itemId of this.ownedItems) {
+      const definition = ITEM_DEFINITIONS[itemId];
+      if (!definition?.modifiers || !definition.modifiers.length) {
+        continue;
+      }
+      effects.push(...definition.modifiers);
+    }
+    this.clickLoadout = combineClickModifiers(effects);
+    this.clickCombat.setLoadout(this.clickLoadout);
+  }
+
   private _isClickModifier(itemId: ItemId): boolean {
     const definition = ITEM_DEFINITIONS[itemId];
-    return !!definition?.clickEffects && definition.clickEffects.length > 0;
+    return !!definition?.modifiers && definition.modifiers.length > 0;
   }
 
   private _grantItem(itemId: ItemId): void {
@@ -3376,12 +3542,8 @@ export class Game {
     if (definition.category === 'support' || isClickModifier) {
       this.supportItems.add(itemId);
     }
-    if (definition.clickEffects) {
-      for (const effect of definition.clickEffects) {
-        this.clickModifiers.addEffect(effect);
-      }
-    }
     this._applyItemEffect(itemId);
+    this._rebuildClickLoadout();
   }
 
   private _applyItemEffect(itemId: ItemId): void {
@@ -3399,6 +3561,17 @@ export class Game {
       return;
     }
     this.supplies += amount;
+  }
+
+  private _spendSupplies(amount: number): boolean {
+    if (amount <= 0) {
+      return true;
+    }
+    if (this.supplies < amount) {
+      return false;
+    }
+    this.supplies -= amount;
+    return true;
   }
 
   private _updateSupplies(dt: number): void {
@@ -3682,12 +3855,9 @@ export class Game {
       }
 
       let hit = false;
-      if (this.knight.hp > 0) {
-        const knightRadius = KNIGHT_SIZE / 2;
-        if (projectile.position.distanceTo(this.knight.pos) <= knightRadius + projectile.radius) {
-          this.knight.hp = Math.max(0, this.knight.hp - projectile.damage);
-          hit = true;
-        }
+      const knightRadius = KNIGHT_SIZE / 2;
+      if (projectile.position.distanceTo(this.knight.pos) <= knightRadius + projectile.radius) {
+        hit = true;
       }
 
       if (!hit) {
@@ -4012,6 +4182,33 @@ export class Game {
     this.damageNumbers = this.damageNumbers.filter((number) => number.age < number.duration);
   }
 
+  private _updateScreenShake(dt: number): void {
+    if (this.screenShakeTimer <= 0 || this.screenShakeDuration <= 0) {
+      if (this.screenShakeOffset.x !== 0 || this.screenShakeOffset.y !== 0) {
+        this.screenShakeOffset.set(0, 0);
+      }
+      return;
+    }
+    this.screenShakeTimer = Math.max(0, this.screenShakeTimer - dt);
+    const progress = this.screenShakeTimer / this.screenShakeDuration;
+    const magnitude = this.screenShakeStrength * Math.max(0, progress);
+    this.screenShakeOffset.set(
+      (Math.random() - 0.5) * 2 * magnitude,
+      (Math.random() - 0.5) * 2 * magnitude
+    );
+    if (this.screenShakeTimer === 0) {
+      this.screenShakeStrength = 0;
+    }
+  }
+
+  private _addScreenshake(intensity: number): void {
+    if (!Number.isFinite(intensity) || intensity <= 0) {
+      return;
+    }
+    this.screenShakeStrength = Math.max(this.screenShakeStrength, intensity);
+    this.screenShakeTimer = this.screenShakeDuration;
+  }
+
   private _spawnHitFlash(position: Vector2, radius: number, options: { strong?: boolean } = {}): void {
     const strong = options.strong ?? false;
     const flash: HitFlash = {
@@ -4052,13 +4249,19 @@ export class Game {
   private _spawnDamageNumber(
     position: Vector2,
     amount: number,
-    options: { color?: string; emphasis?: boolean } = {}
+    options: { color?: string; emphasis?: boolean; lifespanMs?: number } = {}
   ): void {
     if (!Number.isFinite(amount) || amount <= 0) {
       return;
     }
     const emphasis = options.emphasis ?? amount >= 5;
     const color = options.color ?? (emphasis ? '#FFE08A' : '#F6E7C2');
+    const durationSeconds =
+      options.lifespanMs != null && Number.isFinite(options.lifespanMs)
+        ? Math.max(0, options.lifespanMs) / 1000
+        : emphasis
+        ? 0.95
+        : 0.75;
     const entry: DamageNumber = {
       id: this.damageNumberIdCounter++,
       position: position.clone(),
@@ -4066,7 +4269,7 @@ export class Game {
       text: this._formatDamage(amount),
       amount,
       age: 0,
-      duration: emphasis ? 0.95 : 0.75,
+      duration: durationSeconds,
       color,
       emphasis
     };

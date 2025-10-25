@@ -1,17 +1,29 @@
+import { Config } from '../config/config';
 import { Vector2 } from '../math/vector2';
 import type { Village as WorldVillage } from '../world';
 import { Building, type BuildingAttackResult } from './Building';
-import type { VillageConfig } from './WaveController';
 
 export interface VillageAttackEvent {
   village: Village;
   damageApplied: number;
   buildingResult: BuildingAttackResult | null;
   destroyedBuilding: Building | null;
+  villagersLost: number;
+  focus: 'buildings' | 'villagers';
   collapsed: boolean;
 }
 
 const ATTACK_FLASH_DURATION = 1.2;
+
+export interface VillageConfig {
+  buildingHp: number;
+  igniteThreshold: number;
+  burnDamagePerSecond: number;
+  collapseDelay: number;
+  incomePerBuilding: number;
+  repairFraction: number;
+  population: number;
+}
 
 export class Village {
   public readonly id: number;
@@ -23,12 +35,15 @@ export class Village {
   private readonly config: VillageConfig;
   private readonly onCollapseCallback?: (village: Village) => void;
 
-  private maxHp: number;
-  private hp: number;
+  private structuralMaxHp: number;
+  private structuralHp: number;
+  private maxPopulation: number;
+  private population: number;
   private destroyed = false;
   private attackFlashTimer = 0;
   private collapseTimer = 0;
   private burnIntensity = 0;
+  private underAttackTimer = 0;
 
   constructor(
     id: number,
@@ -43,9 +58,11 @@ export class Village {
     this.config = config;
     this.onCollapseCallback = onCollapse;
 
-    const buildingHp = Math.max(1, config.hpPerBuilding);
-    this.maxHp = Math.max(buildingHp, buildingHp * source.huts.length);
-    this.hp = this.maxHp;
+    const buildingHp = Math.max(1, config.buildingHp ?? Config.waves.buildingHP);
+    this.structuralMaxHp = Math.max(buildingHp, buildingHp * source.huts.length);
+    this.structuralHp = this.structuralMaxHp;
+    this.maxPopulation = Math.max(0, Math.round(config.population ?? Config.waves.villagePopulation));
+    this.population = this.maxPopulation;
 
     let buildingId = 1;
     for (const hut of source.huts) {
@@ -62,7 +79,17 @@ export class Village {
   }
 
   getIntegrity(): number {
-    return this.maxHp === 0 ? 0 : Math.max(0, this.hp) / this.maxHp;
+    return this.structuralMaxHp === 0
+      ? 0
+      : Math.max(0, this.structuralHp) / this.structuralMaxHp;
+  }
+
+  getStructuralHp(): number {
+    return Math.max(0, this.structuralHp);
+  }
+
+  getStructuralMaxHp(): number {
+    return this.structuralMaxHp;
   }
 
   isDestroyed(): boolean {
@@ -121,11 +148,15 @@ export class Village {
       this.attackFlashTimer = Math.max(0, this.attackFlashTimer - dt);
     }
 
+    if (this.underAttackTimer > 0) {
+      this.underAttackTimer = Math.max(0, this.underAttackTimer - dt);
+    }
+
     if (this.destroyed) {
       this.collapseTimer += dt;
       this.source.alarmed = false;
     } else {
-      this.source.alarmed = burning || this.attackFlashTimer > 0;
+      this.source.alarmed = burning || this.attackFlashTimer > 0 || this.underAttackTimer > 0;
     }
   }
 
@@ -135,7 +166,9 @@ export class Village {
     }
 
     this.attackFlashTimer = ATTACK_FLASH_DURATION;
-    this.hp = Math.max(0, this.hp - damage);
+    this.underAttackTimer = ATTACK_FLASH_DURATION;
+    const applied = Math.max(0, damage);
+    this.structuralHp = Math.max(0, this.structuralHp - applied);
 
     const intact = this.buildings.filter((building) => !building.isDestroyed());
     let destroyedBuilding: Building | null = null;
@@ -143,32 +176,99 @@ export class Village {
 
     if (intact.length > 0) {
       const target = intact[Math.floor(Math.random() * intact.length)];
-      buildingResult = target.onAttack(damage);
+      buildingResult = target.onAttack(applied);
       if (buildingResult.destroyed) {
         destroyedBuilding = target;
       }
     }
 
-    if (this.hp <= 0 || this.buildings.every((building) => building.isDestroyed())) {
+    const allDestroyed = this.buildings.every((building) => building.isDestroyed());
+    if (this.structuralHp <= 0 || allDestroyed) {
+      this.structuralHp = 0;
+      if (!this.hasPopulation()) {
+        this.destroyVillage();
+      }
+    }
+
+    return {
+      village: this,
+      damageApplied: applied,
+      buildingResult,
+      destroyedBuilding,
+      villagersLost: 0,
+      focus: 'buildings',
+      collapsed: this.destroyed
+    };
+  }
+
+  receiveVillagerRaid(damage: number): VillageAttackEvent | null {
+    if (damage <= 0 || this.destroyed || this.population <= 0) {
+      return null;
+    }
+
+    this.attackFlashTimer = ATTACK_FLASH_DURATION;
+    this.underAttackTimer = ATTACK_FLASH_DURATION;
+    const applied = Math.max(0, damage);
+    const estimatedLoss = Math.max(1, Math.round(applied / 2));
+    const villagersLost = Math.min(this.population, estimatedLoss);
+    this.population = Math.max(0, this.population - villagersLost);
+
+    if (this.population <= 0 && this.structuralHp <= 0) {
       this.destroyVillage();
     }
 
     return {
       village: this,
-      damageApplied: damage,
-      buildingResult,
-      destroyedBuilding,
+      damageApplied: applied,
+      buildingResult: null,
+      destroyedBuilding: null,
+      villagersLost,
+      focus: 'villagers',
       collapsed: this.destroyed
     };
+  }
+
+  hasPopulation(): boolean {
+    return this.population > 0;
+  }
+
+  getPopulationRatio(): number {
+    return this.maxPopulation === 0 ? 0 : this.population / this.maxPopulation;
+  }
+
+  getPopulation(): number {
+    return this.population;
+  }
+
+  getMaxPopulation(): number {
+    return this.maxPopulation;
+  }
+
+  getRemainingStructures(): number {
+    return this.structuralHp;
+  }
+
+  hasIntactBuildings(): boolean {
+    return this.structuralHp > 0 && this.buildings.some((building) => !building.isDestroyed());
+  }
+
+  getUnderAttackIntensity(): number {
+    if (this.destroyed) {
+      return 0;
+    }
+    return Math.max(0, Math.min(1, this.underAttackTimer / ATTACK_FLASH_DURATION));
   }
 
   beginDowntime(): void {
     if (this.destroyed) {
       return;
     }
-    const missing = this.maxHp - this.hp;
+    const missing = this.structuralMaxHp - this.structuralHp;
     if (missing > 0) {
-      this.hp = Math.min(this.maxHp, this.hp + missing * this.config.repairFraction);
+      this.structuralHp = Math.min(
+        this.structuralMaxHp,
+        this.structuralHp + missing * this.config.repairFraction
+      );
     }
     for (const building of this.buildings) {
       building.beginDowntime(this.config.repairFraction);
@@ -176,6 +276,42 @@ export class Village {
     this.attackFlashTimer = 0;
     this.burnIntensity = 0;
     this.source.alarmed = false;
+    this.underAttackTimer = 0;
+  }
+
+  getRepairableHp(): number {
+    if (this.destroyed) {
+      return 0;
+    }
+    const structuralMissing = Math.max(0, this.structuralMaxHp - this.structuralHp);
+    let buildingMissing = 0;
+    for (const building of this.buildings) {
+      if (building.isDestroyed()) {
+        continue;
+      }
+      buildingMissing += building.getMissingHp();
+    }
+    return Math.max(structuralMissing, buildingMissing);
+  }
+
+  repairStructuresFully(): number {
+    if (this.destroyed) {
+      return 0;
+    }
+    let restored = 0;
+    for (const building of this.buildings) {
+      if (building.isDestroyed()) {
+        continue;
+      }
+      restored += building.repairToFull();
+    }
+    if (restored > 0) {
+      this.structuralHp = Math.min(this.structuralMaxHp, this.structuralHp + restored);
+      this.attackFlashTimer = 0;
+      this.underAttackTimer = 0;
+      this.burnIntensity = 0;
+    }
+    return restored;
   }
 
   collectIncome(): number {
@@ -183,7 +319,7 @@ export class Village {
       return 0;
     }
     const intact = this.buildings.filter((building) => !building.isDestroyed()).length;
-    if (intact === 0) {
+    if (intact === 0 || this.population <= 0) {
       return 0;
     }
     return Math.round(intact * this.config.incomePerBuilding);
@@ -194,7 +330,10 @@ export class Village {
       return;
     }
     if (this.buildings.every((building) => building.isDestroyed())) {
-      this.destroyVillage();
+      this.structuralHp = 0;
+      if (!this.hasPopulation()) {
+        this.destroyVillage();
+      }
     }
   }
 
@@ -204,11 +343,15 @@ export class Village {
     }
     this.destroyed = true;
     this.collapseTimer = 0;
+    this.structuralHp = 0;
+    this.population = 0;
+    this.underAttackTimer = 0;
     for (const building of this.buildings) {
       if (!building.isDestroyed()) {
         building.onDestroy();
       }
     }
+    this.source.alarmed = false;
     if (this.onCollapseCallback) {
       this.onCollapseCallback(this);
     }
