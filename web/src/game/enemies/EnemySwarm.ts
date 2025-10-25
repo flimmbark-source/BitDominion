@@ -60,7 +60,7 @@ export class EnemySwarm {
     this.aliveFlag = true;
     this.stats = { ...params.stats };
     this.baseMemberCount = Math.max(1, Math.round(params.memberCount));
-    this.maxHp = this.baseMemberCount * params.stats.hp;
+    this.maxHp = Math.max(1, params.stats.hp);
     this.hp = this.maxHp;
     this.attackCooldown = 0;
     this.dot = null;
