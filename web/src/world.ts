@@ -115,6 +115,12 @@ const VILLAGER_ALERT_DURATION = 1.8;
 const VILLAGER_FLEE_DURATION = 2.6;
 const VILLAGER_HURT_FLASH = 0.25;
 
+const ISO_TILE_SIZE = 80;
+const ISO_VILLAGE_SCALE = 1.35;
+const ISO_TAVERN_SCALE = 1.4;
+const ISO_TREE_SCALE = 1.15;
+const ISO_VILLAGER_SCALE = 1.5;
+
 function mulberry32(seed: number): () => number {
   return function random() {
     let t = (seed += 0x6d2b79f5);
@@ -471,6 +477,7 @@ export class World {
   }
 
   drawTerrain(ctx: CanvasRenderingContext2D): void {
+    this.drawIsoGround(ctx);
     this.drawTavern(ctx);
     this.drawHuts(ctx);
     this.drawChests(ctx);
@@ -513,6 +520,38 @@ export class World {
       ctx.moveTo(segment.from.x, segment.from.y);
       ctx.lineTo(segment.to.x, segment.to.y);
       ctx.strokeStyle = segment.blocked ? 'rgba(255, 120, 120, 0.9)' : 'rgba(120, 200, 255, 0.8)';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private drawIsoGround(ctx: CanvasRenderingContext2D): void {
+    const cols = Math.ceil(WIDTH / ISO_TILE_SIZE);
+    const rows = Math.ceil(WORLD_HEIGHT / ISO_TILE_SIZE);
+    ctx.save();
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const baseX = col * ISO_TILE_SIZE;
+        const baseY = row * ISO_TILE_SIZE;
+        const tint = (col + row) % 2 === 0 ? '#1d2f20' : '#223827';
+        ctx.fillStyle = tint;
+        ctx.fillRect(baseX, baseY, ISO_TILE_SIZE, ISO_TILE_SIZE);
+      }
+    }
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.lineWidth = 1;
+    for (let row = 0; row <= rows; row++) {
+      const y = row * ISO_TILE_SIZE;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(WIDTH, y);
+      ctx.stroke();
+    }
+    for (let col = 0; col <= cols; col++) {
+      const x = col * ISO_TILE_SIZE;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, WORLD_HEIGHT);
       ctx.stroke();
     }
     ctx.restore();
@@ -747,38 +786,39 @@ export class World {
 
   private drawTavern(ctx: CanvasRenderingContext2D): void {
     const { position, radius } = this.tavern;
+    const scaledRadius = radius * ISO_TAVERN_SCALE;
     ctx.save();
     ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
     ctx.beginPath();
-    ctx.arc(position.x, position.y + 6, radius + 8, 0, Math.PI * 2);
+    ctx.arc(position.x, position.y + 6, scaledRadius + 10, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = TAVERN_BASE_COLOR;
     ctx.strokeStyle = TAVERN_OUTLINE_COLOR;
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
+    ctx.arc(position.x, position.y, scaledRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = TAVERN_ROOF_COLOR;
     ctx.beginPath();
-    ctx.moveTo(position.x - radius * 0.9, position.y - radius * 0.4);
-    ctx.lineTo(position.x, position.y - radius * 1.1);
-    ctx.lineTo(position.x + radius * 0.9, position.y - radius * 0.4);
+    ctx.moveTo(position.x - scaledRadius * 0.9, position.y - scaledRadius * 0.4);
+    ctx.lineTo(position.x, position.y - scaledRadius * 1.1);
+    ctx.lineTo(position.x + scaledRadius * 0.9, position.y - scaledRadius * 0.4);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = TAVERN_DOOR_COLOR;
-    const doorWidth = radius * 0.45;
-    const doorHeight = radius * 0.8;
-    ctx.fillRect(position.x - doorWidth / 2, position.y + radius * 0.1, doorWidth, doorHeight);
+    const doorWidth = scaledRadius * 0.45;
+    const doorHeight = scaledRadius * 0.8;
+    ctx.fillRect(position.x - doorWidth / 2, position.y + scaledRadius * 0.1, doorWidth, doorHeight);
 
     ctx.fillStyle = '#fef3c7';
-    const signWidth = radius * 0.7;
-    const signHeight = radius * 0.28;
-    ctx.fillRect(position.x - signWidth / 2, position.y - radius * 0.05, signWidth, signHeight);
+    const signWidth = scaledRadius * 0.7;
+    const signHeight = scaledRadius * 0.28;
+    ctx.fillRect(position.x - signWidth / 2, position.y - scaledRadius * 0.05, signWidth, signHeight);
     ctx.fillStyle = '#92400e';
     ctx.font = 'bold 12px Inter';
     ctx.textAlign = 'center';
@@ -1223,7 +1263,9 @@ export class World {
     ctx.save();
     ctx.fillStyle = HUT_FILL_COLOR;
     for (const hut of this.huts) {
-      ctx.fillRect(hut.center.x - hut.width / 2, hut.center.y - hut.height / 2, hut.width, hut.height);
+      const width = hut.width * ISO_VILLAGE_SCALE;
+      const height = hut.height * ISO_VILLAGE_SCALE;
+      ctx.fillRect(hut.center.x - width / 2, hut.center.y - height / 2, width, height);
     }
     ctx.restore();
   }
@@ -1233,7 +1275,8 @@ export class World {
     for (const village of this.villages) {
       for (const chest of village.chests) {
         ctx.fillStyle = chest.opened ? CHEST_OPEN_COLOR : CHEST_CLOSED_COLOR;
-        ctx.fillRect(chest.position.x - 3, chest.position.y - 3, 6, 6);
+        const size = 6 * ISO_VILLAGE_SCALE;
+        ctx.fillRect(chest.position.x - size / 2, chest.position.y - size / 2, size, size);
       }
     }
     ctx.restore();
@@ -1244,7 +1287,8 @@ export class World {
     ctx.fillStyle = TREE_COLOR;
     for (const tree of this.trees) {
       ctx.beginPath();
-      ctx.arc(tree.position.x, tree.position.y, tree.radius * 0.6, 0, Math.PI * 2);
+      const canopyRadius = tree.radius * 0.6 * ISO_TREE_SCALE;
+      ctx.arc(tree.position.x, tree.position.y, canopyRadius, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
@@ -1268,13 +1312,15 @@ export class World {
             ctx.fillStyle = VILLAGER_IDLE_COLOR;
             break;
         }
-        ctx.fillRect(villager.pos.x - 2, villager.pos.y - 2, 4, 4);
+        const size = 4 * ISO_VILLAGER_SCALE;
+        ctx.fillRect(villager.pos.x - size / 2, villager.pos.y - size / 2, size, size);
         if (villager.hurtTimer > 0) {
           const ratio = Math.min(1, villager.hurtTimer / VILLAGER_HURT_FLASH);
           ctx.globalAlpha = 0.6 * ratio;
           ctx.strokeStyle = '#FF5C5C';
           ctx.lineWidth = 1;
-          ctx.strokeRect(villager.pos.x - 3, villager.pos.y - 3, 6, 6);
+          const outline = size + 2;
+          ctx.strokeRect(villager.pos.x - outline / 2, villager.pos.y - outline / 2, outline, outline);
           ctx.globalAlpha = 1;
         }
       }
