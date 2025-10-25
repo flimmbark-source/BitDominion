@@ -282,10 +282,6 @@ appRootElement.innerHTML = `
         <div class="bar"><div class="bar-fill" id="darkEnergyFill"></div></div>
         <p id="darkEnergyText">Gathering energy…</p>
         <div class="next-wave-timer" id="nextWaveTimer">Next wave: --</div>
-        <div class="village-status-panel hidden" id="villageStatusPanel">
-          <h3>Village Status</h3>
-          <ul class="village-status-list" id="villageStatusList"></ul>
-        </div>
         <div class="downtime-quest-panel hidden" id="downtimeQuestPanel">
           <div class="quest-header" id="downtimeQuestTitle"></div>
           <div class="quest-body" id="downtimeQuestDescription"></div>
@@ -335,6 +331,10 @@ appRootElement.innerHTML = `
             </div>
           </div>
         </div>
+      </div>
+      <div class="village-status-panel hidden" id="villageStatusPanel">
+        <h3>Village Status</h3>
+        <ul class="village-status-list" id="villageStatusList"></ul>
       </div>
       <div class="shop-panel ui-panel hidden" id="buildingShopPanel">
         <h2>Workshop Ledger</h2>

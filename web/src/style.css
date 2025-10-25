@@ -120,12 +120,18 @@ body {
 }
 
 .village-status-panel {
-  margin-top: 10px;
-  padding: 8px;
-  background: rgba(15, 23, 42, 0.55);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 8px;
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  width: 260px;
+  padding: 12px 14px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 12px;
   text-align: left;
+  box-sizing: border-box;
+  z-index: 18;
+  backdrop-filter: blur(2px);
 }
 
 .village-status-panel h3 {
