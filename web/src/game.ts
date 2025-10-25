@@ -1419,6 +1419,18 @@ export class Game {
       this._emitNoise(point, NOISE_SPRINT_STRENGTH);
     }
 
+    const attackTriggered = this.clickCombat.handlePointerDown(point.clone());
+    if (attackTriggered) {
+      if (typeof timeSeconds === 'number') {
+        this.lastPointerTime = timeSeconds;
+        this.lastPointerPos = point.clone();
+      } else {
+        this.lastPointerTime = 0;
+        this.lastPointerPos = point.clone();
+      }
+      return;
+    }
+
     if (this.downtimeQuests.handlePointerDown(point.clone())) {
       if (typeof timeSeconds === 'number') {
         this.lastPointerTime = timeSeconds;
@@ -1429,22 +1441,10 @@ export class Game {
       return;
     }
 
-    const attackTriggered = this.clickCombat.handlePointerDown(point.clone());
-    if (!attackTriggered) {
-      if (typeof timeSeconds !== 'number') {
-        this.lastPointerTime = 0;
-      }
-      this.lastPointerPos = point.clone();
-      return;
-    }
-
-    if (typeof timeSeconds === 'number') {
-      this.lastPointerTime = timeSeconds;
-      this.lastPointerPos = point.clone();
-    } else {
+    if (typeof timeSeconds !== 'number') {
       this.lastPointerTime = 0;
-      this.lastPointerPos = point.clone();
     }
+    this.lastPointerPos = point.clone();
   }
 
   onPointerMove(x: number, y: number): void {
