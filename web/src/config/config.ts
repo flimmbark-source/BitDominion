@@ -1,6 +1,6 @@
 export const Config = {
   click: {
-    baseDamage: 8,
+    baseDamage: 15,
     cooldownMs: 120,
     clickAssistRadius: 32,
     dmgTextLifespanMs: 600,
@@ -33,7 +33,7 @@ export const Config = {
     prepWindowMs: 25000,
     swarmGroupsByWave: (wave: number) => 3 + Math.floor(wave / 1),
     enemiesPerSwarm: (wave: number) => 6 + 2 * wave,
-    enemyBase: { hp: 60, atk: 4, speed: 38 },
+    enemyBase: { hp: 88, atk: 4, speed: 38 },
     buildingHP: 300,
     villagePopulation: 10
   },
