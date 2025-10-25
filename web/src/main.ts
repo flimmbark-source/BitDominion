@@ -585,7 +585,8 @@ game.setPersistentItems([...persistentClickItems]);
 
 const MIN_CAMERA_ZOOM = 0.6;
 const MAX_CAMERA_ZOOM = 1.8;
-let cameraZoom = 1;
+const DEFAULT_CAMERA_ZOOM = 1.2;
+let cameraZoom = DEFAULT_CAMERA_ZOOM;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
