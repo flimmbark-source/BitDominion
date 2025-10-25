@@ -4431,14 +4431,18 @@ export class Game {
       if (alpha <= 0) {
         continue;
       }
-      const scale = number.emphasis ? 1.1 + 0.2 * (1 - clamped) : 1 + 0.12 * (1 - clamped);
+      const scale = number.emphasis ? 1.15 + 0.25 * (1 - clamped) : 1.05 + 0.18 * (1 - clamped);
+      const fontSize = number.emphasis ? 22 : 18;
+      const fontWeight = number.emphasis ? '700' : '600';
       ctx.save();
       ctx.translate(number.position.x, number.position.y);
       ctx.scale(scale, scale);
       ctx.globalAlpha = alpha;
-      ctx.font = `${number.emphasis ? '700' : '600'} 12px "Inter", sans-serif`;
-      ctx.strokeStyle = 'rgba(17, 24, 39, 0.55)';
-      ctx.lineWidth = 2.2 / scale;
+      ctx.font = `${fontWeight} ${fontSize}px "Inter", sans-serif`;
+      ctx.strokeStyle = 'rgba(17, 24, 39, 0.7)';
+      ctx.lineWidth = 3 / scale;
+      ctx.shadowColor = 'rgba(17, 24, 39, 0.45)';
+      ctx.shadowBlur = 6 / scale;
       ctx.strokeText(number.text, 0, 0);
       ctx.fillStyle = number.color;
       ctx.fillText(number.text, 0, 0);

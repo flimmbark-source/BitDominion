@@ -29,10 +29,11 @@ export const Config = {
     }
   },
   waves: {
-    firstDelayMs: 8000,
+    firstDelayMs: 120000,
     prepWindowMs: 25000,
     swarmGroupsByWave: (wave: number) => 3 + Math.floor(wave / 1),
     enemiesPerSwarm: (wave: number) => 6 + 2 * wave,
+    firstWaveEnemyHp: 100,
     enemyBase: { hp: 88, atk: 4, speed: 38 },
     buildingHP: 300,
     villagePopulation: 10
