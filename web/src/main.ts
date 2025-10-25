@@ -282,11 +282,6 @@ appRootElement.innerHTML = `
         <div class="bar"><div class="bar-fill" id="darkEnergyFill"></div></div>
         <p id="darkEnergyText">Gathering energy…</p>
         <div class="next-wave-timer" id="nextWaveTimer">Next wave: --</div>
-        <div class="downtime-quest-panel hidden" id="downtimeQuestPanel">
-          <div class="quest-header" id="downtimeQuestTitle"></div>
-          <div class="quest-body" id="downtimeQuestDescription"></div>
-          <div class="quest-progress" id="downtimeQuestProgress"></div>
-        </div>
       </div>
       <div class="lore-banner ui-panel" id="loreBanner">
         <div class="lore-banner-header">
@@ -310,6 +305,11 @@ appRootElement.innerHTML = `
           <span class="stat-label shards">Relic Shards</span>
           <span class="stat-value" id="heroShardText">0</span>
           <span class="resource-gain" id="heroShardGain" aria-live="polite"></span>
+        </div>
+        <div class="downtime-quest-panel hidden" id="downtimeQuestPanel">
+          <div class="quest-header" id="downtimeQuestTitle"></div>
+          <div class="quest-body" id="downtimeQuestDescription"></div>
+          <div class="quest-progress" id="downtimeQuestProgress"></div>
         </div>
       </div>
       <div class="hud">
