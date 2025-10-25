@@ -304,33 +304,31 @@ appRootElement.innerHTML = `
           The tavern cellar shelters Mirella's roaming workshop—an artisan crew that brews supplies while you raise defenses for the night.
         </p>
       </div>
+      <div class="resource-panel ui-panel stats-panel">
+        <div class="stat-row">
+          <span class="stat-label gold">Gold</span>
+          <span class="stat-value" id="heroGoldText">0</span>
+          <span class="resource-gain" id="heroGoldGain" aria-live="polite"></span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label shards">Relic Shards</span>
+          <span class="stat-value" id="heroShardText">0</span>
+          <span class="resource-gain" id="heroShardGain" aria-live="polite"></span>
+        </div>
+      </div>
       <div class="hud">
         <div class="hud-bottom-row">
           <div class="hud-section hud-section--left">
-            <div class="ui-panel stats-panel">
-              <div class="stat-row">
-                <span class="stat-label gold">Gold</span>
-                <span class="stat-value" id="heroGoldText">0</span>
-                <span class="resource-gain" id="heroGoldGain" aria-live="polite"></span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label shards">Relic Shards</span>
-                <span class="stat-value" id="heroShardText">0</span>
-                <span class="resource-gain" id="heroShardGain" aria-live="polite"></span>
-              </div>
-            </div>
+            <div class="ui-panel inventory" id="inventoryPanel"></div>
           </div>
           <div class="hud-section hud-section--center">
-            <div class="hud-center-row">
-              <div class="ui-panel inventory" id="inventoryPanel"></div>
-            </div>
-            <div class="build-feedback" id="buildErrorMessage" role="status" aria-live="polite"></div>
-          </div>
-          <div class="hud-section hud-section--right">
             <button class="ui-panel build-toggle" id="buildPrompt" type="button">
               <span class="build-toggle-icon" aria-hidden="true">🔨</span>
               <span class="build-toggle-text">(B)uild</span>
             </button>
+            <div class="build-feedback" id="buildErrorMessage" role="status" aria-live="polite"></div>
+          </div>
+          <div class="hud-section hud-section--right">
             <div class="ui-panel buffs-panel" id="buffsPanel">
               <div class="buffs-title">Temporary Blessings</div>
               <ul class="buffs-list" id="buffList"></ul>
@@ -585,11 +583,37 @@ function savePersistentClickUpgrades(ids: Iterable<ItemId>): void {
 const persistentClickItems = new Set<ItemId>(loadPersistentClickUpgrades());
 game.setPersistentItems([...persistentClickItems]);
 
-let isoTransform = createIsoTransform(canvas.width, canvas.height);
+const MIN_CAMERA_ZOOM = 0.6;
+const MAX_CAMERA_ZOOM = 1.8;
+let cameraZoom = 1;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+let isoTransform = createIsoTransform(canvas.width, canvas.height, cameraZoom);
 
 function updateIsoProjection(): void {
-  isoTransform = createIsoTransform(canvas.width, canvas.height);
+  isoTransform = createIsoTransform(canvas.width, canvas.height, cameraZoom);
 }
+
+function adjustCameraZoom(multiplier: number): void {
+  cameraZoom = clamp(cameraZoom * multiplier, MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM);
+  updateIsoProjection();
+}
+
+canvas.addEventListener(
+  'wheel',
+  (event: WheelEvent) => {
+    if (event.ctrlKey) {
+      return;
+    }
+    event.preventDefault();
+    const zoomFactor = Math.exp(-event.deltaY * 0.0015);
+    adjustCameraZoom(zoomFactor);
+  },
+  { passive: false }
+);
 
 updateIsoProjection();
 
