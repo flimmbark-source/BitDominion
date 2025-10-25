@@ -132,7 +132,11 @@ export class WaveController {
 
   private buildSwarmStats(waveIndex: number): SwarmStats {
     const base = Config.waves.enemyBase;
-    const hp = base.hp + waveIndex * 12;
+    const firstWaveHp = Config.waves.firstWaveEnemyHp ?? base.hp + 12;
+    const hp =
+      waveIndex === 1
+        ? firstWaveHp
+        : Math.max(1, base.hp + waveIndex * 12);
     const damage = base.atk + waveIndex * 2;
     const speed = base.speed + Math.min(12, waveIndex * 2);
     return { hp, damage, speed };
