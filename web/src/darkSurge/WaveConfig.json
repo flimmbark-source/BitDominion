@@ -1,0 +1,31 @@
+{
+  "downtimeSeconds": 120,
+  "spawn": {
+    "baseCount": 12,
+    "countGrowth": 6,
+    "burstSize": 4,
+    "intervalSeconds": 1.2,
+    "maxActive": 64
+  },
+  "enemy": {
+    "baseHp": 60,
+    "hpGrowth": 14,
+    "baseSpeed": 36,
+    "speedGrowth": 2,
+    "baseDamage": 8,
+    "damageGrowth": 1.5,
+    "attackInterval": 1.4,
+    "separationRadius": 48,
+    "separationWeight": 26,
+    "alignmentWeight": 16,
+    "cohesionWeight": 12
+  },
+  "village": {
+    "hpPerBuilding": 140,
+    "igniteThreshold": 55,
+    "burnDamagePerSecond": 10,
+    "collapseDelay": 4.5,
+    "incomePerBuilding": 35,
+    "repairFraction": 0.35
+  }
+}

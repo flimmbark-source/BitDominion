@@ -206,7 +206,7 @@ export const NOISE_SPRINT_STRENGTH = 6;
 export const NOISE_VILLAGER_ALARM_STRENGTH = 9;
 export const NOISE_CHEST_STRENGTH = 16;
 
-export const DOWNTIME_DURATION = 240;
+export const DOWNTIME_DURATION = 120;
 export const WAVE_DURATION = 60;
 export const QUEST_RADIUS = 32;
 export const QUEST_COMPLETION_TIME = 4.5;
