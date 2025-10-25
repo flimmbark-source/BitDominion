@@ -340,10 +340,36 @@ appRootElement.innerHTML = `
         <h2>Workshop Ledger</h2>
         <div class="shop-items" id="shopItemsContainer"></div>
       </div>
-      <div class="shop-panel ui-panel hidden" id="itemShopPanel">
-        <h2>Hero Arsenal</h2>
-        <div class="click-loadout-summary" id="clickLoadoutSummary"></div>
-        <div class="shop-items" id="itemShopItemsContainer"></div>
+      <div class="tavern-overlay hidden" id="itemShopPanel" aria-hidden="true">
+        <div class="tavern-dialog" role="dialog" aria-modal="true" aria-labelledby="tavernDialogTitle">
+          <div class="tavern-dialog-header">
+            <div class="tavern-dialog-titles">
+              <h2 class="tavern-dialog-title" id="tavernDialogTitle">Mirella's Tavern Workshop</h2>
+              <p class="tavern-dialog-subtitle">Spend supplies between waves to refit Rowan's arsenal.</p>
+            </div>
+            <button class="tavern-dialog-close" id="itemShopClose" type="button" aria-label="Leave tavern shop">×</button>
+          </div>
+          <div class="tavern-dialog-body">
+            <aside class="tavern-overview" aria-labelledby="tavernOverviewTitle">
+              <h3 class="tavern-overview-title" id="tavernOverviewTitle">Loadout Summary</h3>
+              <p class="tavern-overview-description">
+                Tune weapons and support relics before the next assault. Upgrades only trade during downtime.
+              </p>
+              <div class="click-loadout-summary" id="clickLoadoutSummary"></div>
+            </aside>
+            <div class="tavern-service-area">
+              <div class="tavern-service-header">
+                <h3>Available Upgrades</h3>
+                <p>Choose a weapon or support relic to empower Rowan.</p>
+              </div>
+              <div class="shop-items" id="itemShopItemsContainer"></div>
+            </div>
+          </div>
+          <div class="tavern-dialog-footer">
+            <button class="tavern-footer-button" id="itemShopLeave" type="button">Leave Tavern</button>
+            <div class="tavern-footer-hint">Press <span class="key-hint">B</span> or walk away to close.</div>
+          </div>
+        </div>
       </div>
       <div class="tooltip" id="tooltipPanel"></div>
       <div class="game-over hidden" id="gameOverScreen">
@@ -641,6 +667,8 @@ const buildingShopPanel = requireElement<HTMLDivElement>('#buildingShopPanel');
 const buildingShopItemsContainer = requireElement<HTMLDivElement>('#shopItemsContainer');
 const itemShopPanel = requireElement<HTMLDivElement>('#itemShopPanel');
 const itemShopItemsContainer = requireElement<HTMLDivElement>('#itemShopItemsContainer');
+const itemShopCloseButton = requireElement<HTMLButtonElement>('#itemShopClose');
+const itemShopLeaveButton = requireElement<HTMLButtonElement>('#itemShopLeave');
 const clickLoadoutSummary = requireElement<HTMLDivElement>('#clickLoadoutSummary');
 const gameOverScreen = requireElement<HTMLDivElement>('#gameOverScreen');
 const gameOverTitle = requireElement<HTMLHeadingElement>('#gameOverTitle');
@@ -757,6 +785,14 @@ escapeMenuHelpToggle.addEventListener('click', () => {
 escapeMenu.addEventListener('click', (event) => {
   if (event.target === escapeMenu) {
     closeEscapeMenu();
+  }
+});
+
+itemShopCloseButton.addEventListener('click', () => setItemShopOpen(false));
+itemShopLeaveButton.addEventListener('click', () => setItemShopOpen(false));
+itemShopPanel.addEventListener('click', (event) => {
+  if (event.target === itemShopPanel) {
+    setItemShopOpen(false);
   }
 });
 
@@ -1720,6 +1756,10 @@ function setItemShopOpen(open: boolean): void {
   }
   if (!isItemShopOpen) {
     hideTooltip();
+  } else {
+    window.requestAnimationFrame(() => {
+      itemShopCloseButton.focus();
+    });
   }
   updateItemShopButtons();
 }
@@ -1855,7 +1895,6 @@ function updateClickLoadoutSummary(): void {
     .join(', ');
 
   clickLoadoutSummary.innerHTML = `
-    <h3>Click Loadout</h3>
     <ul>${lines.map((line) => `<li>${line}</li>`).join('')}</ul>
     ${rankSummary ? `<p class="loadout-ranks">${rankSummary}</p>` : ''}
   `;
@@ -1954,6 +1993,7 @@ function updateItemShopButtons(): void {
   }
   const shopVisible = isItemShopOpen && inDowntime;
   itemShopPanel.classList.toggle('hidden', !shopVisible);
+  itemShopPanel.setAttribute('aria-hidden', shopVisible ? 'false' : 'true');
   updateClickLoadoutSummary();
 }
 
