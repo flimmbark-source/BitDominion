@@ -262,6 +262,7 @@ export interface VillageSummary {
 }
 
 const QUEST_INTERACTION_RADIUS = 96;
+const VILLAGE_CLICK_BUFFER = 18;
 const CREEP_APPROACH_BUFFER = 80;
 const BUILD_PREVIEW_TILE_SIZE = 12;
 const ISO_CASTLE_SCALE = 1.6;
@@ -866,7 +867,6 @@ export class Game {
     if (!this.questGivers.length) {
       return null;
     }
-    const rewardText = (quest: Quest) => `${quest.reward.supplies} gold • ${quest.reward.description}`;
     const candidates: {
       giver: QuestGiver;
       state: QuestGiverStatus['state'];
@@ -904,6 +904,79 @@ export class Game {
       return a.distance - b.distance;
     });
     const { giver, state, activeQuest, distance } = candidates[0];
+    return this._createQuestInteraction(giver, state, activeQuest, distance);
+  }
+
+  getQuestInteractionAtPosition(x: number, y: number): NearbyQuestInteraction | null {
+    if (!this.questGivers.length) {
+      return null;
+    }
+    const point = new Vector2(x, y);
+    const villages = this.world.getVillages();
+    const candidates: {
+      giver: QuestGiver;
+      state: QuestGiverStatus['state'];
+      activeQuest: Quest | null;
+      distance: number;
+    }[] = [];
+    for (const giver of this.questGivers) {
+      const { state, activeQuest } = this._resolveQuestGiverState(giver);
+      if (state === 'waiting' && !giver.questOffer && !activeQuest) {
+        continue;
+      }
+      const village = villages[giver.villageIndex] ?? null;
+      let distance: number | null = null;
+      if (village) {
+        const radius = Math.max(0, village.canopyRadius + VILLAGE_CLICK_BUFFER);
+        const distToVillage = point.distanceTo(village.center);
+        if (distToVillage <= radius) {
+          distance = distToVillage;
+        }
+      }
+      if (distance == null) {
+        const distToGiver = point.distanceTo(giver.position);
+        if (distToGiver <= QUEST_INTERACTION_RADIUS) {
+          distance = distToGiver;
+        }
+      }
+      if (distance == null) {
+        continue;
+      }
+      candidates.push({ giver, state, activeQuest, distance });
+    }
+    if (!candidates.length) {
+      return null;
+    }
+    candidates.sort((a, b) => a.distance - b.distance);
+    const { giver, state, activeQuest, distance } = candidates[0];
+    return this._createQuestInteraction(giver, state, activeQuest, distance);
+  }
+
+  getQuestInteractionForGiver(giverId: number): NearbyQuestInteraction | null {
+    const giver = this.questGivers.find((candidate) => candidate.id === giverId);
+    if (!giver) {
+      return null;
+    }
+    const { state, activeQuest } = this._resolveQuestGiverState(giver);
+    const distance = giver.position.distanceTo(this.knight.pos);
+    return this._createQuestInteraction(giver, state, activeQuest, distance);
+  }
+
+  isPointInsideTavern(x: number, y: number): boolean {
+    const tavern = this.world.getTavern();
+    const dx = x - tavern.position.x;
+    const dy = y - tavern.position.y;
+    const radius = Math.max(0, tavern.interactRadius);
+    return dx * dx + dy * dy <= radius * radius;
+  }
+
+  private _createQuestInteraction(
+    giver: QuestGiver,
+    state: QuestGiverStatus['state'],
+    activeQuest: Quest | null,
+    distance: number
+  ): NearbyQuestInteraction {
+    const rewardText = (quest: Quest) => `${quest.reward.supplies} gold • ${quest.reward.description}`;
     return {
       giverId: giver.id,
       giverName: giver.name,
@@ -2790,9 +2863,10 @@ export class Game {
     const strong = !target.alive;
     const color = context.crit ? '#fde68a' : undefined;
     const lifespanMs = context.source === 'click' ? Config.click.dmgTextLifespanMs : undefined;
+    const emphasis = context.source === 'click' || context.crit || strong;
     this._spawnHitFlash(target.pos, target.getCollisionRadius(), { strong });
     this._spawnDamageNumber(target.pos, dealt, {
-      emphasis: context.crit || strong,
+      emphasis,
       color,
       lifespanMs
     });
@@ -2817,9 +2891,10 @@ export class Game {
     }
     const color = context.crit ? '#fde68a' : undefined;
     const lifespanMs = context.source === 'click' ? Config.click.dmgTextLifespanMs : undefined;
+    const emphasis = context.source === 'click' || context.crit || killed;
     this._spawnHitFlash(target.pos, target.getCollisionRadius(), { strong: killed });
     this._spawnDamageNumber(target.pos, dealt, {
-      emphasis: context.crit || killed,
+      emphasis,
       color,
       lifespanMs
     });

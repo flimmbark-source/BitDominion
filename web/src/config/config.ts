@@ -1,6 +1,6 @@
 export const Config = {
   click: {
-    baseDamage: 10,
+    baseDamage: 8,
     cooldownMs: 120,
     clickAssistRadius: 32,
     dmgTextLifespanMs: 600,
