@@ -1,3 +1,5 @@
+import type { ClickModifierEffect } from '../entities/clickModifiers';
+
 export type WeaponItemId = 'steelSword' | 'throwingKnife' | 'torch' | 'crossbowCharm' | 'smokeBombSatchel';
 export type SupportItemId = 'scoutBoots' | 'hunterJerky';
 export type ItemId = WeaponItemId | SupportItemId;
@@ -22,7 +24,8 @@ export interface ItemDefinition {
     readonly name: string;
     readonly description: string;
   };
-  readonly buildPaths: readonly string[];
+  readonly stats: readonly string[];
+  readonly clickEffects?: readonly ClickModifierEffect[];
 }
 
 export const ITEM_DEFINITIONS: Record<ItemId, ItemDefinition> = {
@@ -30,126 +33,91 @@ export const ITEM_DEFINITIONS: Record<ItemId, ItemDefinition> = {
     id: 'steelSword',
     name: 'Knightblade',
     description:
-      'Tempered steel blade that keeps the knight lethal up close with wide melee sweeps and reliable crowd control.',
-    role: 'Melee core — anchors bruiser builds and rewards staying in the fray.',
+      'Tempered steel blade that anchors your fundamentals. Every strike channels through this heirloom to deliver a dependable opening hit.',
+    role: 'Starter focus — unlocks manual strikes and baseline damage.',
     cost: 0,
     icon: '🗡️',
     unique: true,
     category: 'weapon',
-    buildPaths: [
-      'Pair with Ember Torch or barricades to create a burning front line.',
-      'Stack Hunter Jerky for heavy-hitting melee crits.'
-    ]
+    stats: ['Base click damage: 1.5', 'Always equipped at the start of a run']
   },
   scoutBoots: {
     id: 'scoutBoots',
-    name: 'Scout Boots',
+    name: 'Assassin’s Token',
     description:
-      'Supple leather boots that grant +15% stride speed and convert completed rescues into bonus evolution progress.',
-    role: 'Mobility support — rewards questing and map control playstyles.',
-    cost: 55,
-    icon: '🥾',
+      'A silver coin etched with fatal intent. Holding it sharpens your reflexes and makes critical ambushes second nature.',
+    role: 'Crit engine — rewards precision clicks with massive payoffs.',
+    cost: 65,
+    icon: '🗡️',
     unique: true,
     category: 'support',
-    buildPaths: [
-      'Rush ranged items like Throwing Knives or Crossbow Charm to kite efficiently.',
-      'Chain with Smoke Bomb Satchel for escape-heavy trap builds.'
-    ]
+    stats: ['25% critical chance on manual and auto strikes', 'Critical hits deal 2.2× damage'],
+    clickEffects: [{ type: 'crit', chance: 0.25, multiplier: 2.2 }]
   },
   hunterJerky: {
     id: 'hunterJerky',
-    name: 'Hunter Jerky',
+    name: 'Emberbrand Charm',
     description:
-      'Smoked stag strips fortify resolve with +20% weapon damage and increased kill mastery gains.',
-    role: 'Damage support — accelerates offensive evolutions.',
-    cost: 60,
-    icon: '🥩',
+      'An ember kept in obsidian glass. It brands every enemy you strike, letting the burn finish what the blade began.',
+    role: 'Damage-over-time — leaves foes smoldering after each click.',
+    cost: 55,
+    icon: '🔥',
     unique: true,
     category: 'support',
-    buildPaths: [
-      'Combine with Throwing Knives for rapid Poison Dagger unlocks.',
-      'Feed Ember Torch or Knightblade with extra burn damage.'
-    ]
+    stats: ['Clicks ignite targets for 2.5 DPS', 'Burn duration: 3s'],
+    clickEffects: [{ type: 'burn', dps: 2.5, duration: 3 }]
   },
   throwingKnife: {
     id: 'throwingKnife',
-    name: 'Throwing Knife',
+    name: 'Splinter Sigil',
     description:
-      'Launches an automatic flurry of daggers toward the nearest foe, shredding front lines from range.',
-    role: 'Ranged pressure — excels at thinning waves before they reach you.',
-    cost: 0,
-    icon: '🔪',
+      'Arcane runes fracture each click into a trio of precise strikes, ideal for shredding elites with rapid bursts.',
+    role: 'Combo core — multiplies every manual click into a flurry.',
+    cost: 45,
+    icon: '🔱',
     unique: true,
     category: 'weapon',
-    evolveRequirement: { type: 'kills', count: 25, label: 'Knife kills' },
-    evolution: {
-      name: 'Poison Daggers',
-      description: 'Adds a third dagger, inflicts venom DoT, and increases spread for lane coverage.'
-    },
-    buildPaths: [
-      'Pair with mobility from Scout Boots to kite while blades clean up.',
-      'Add Hunter Jerky to accelerate kill requirements and boost damage.'
-    ]
+    stats: ['Clicks strike 3 times', 'Bonus hits deal 65% damage'],
+    clickEffects: [{ type: 'multiHit', hitCount: 3, additionalScale: 0.65 }]
   },
   torch: {
     id: 'torch',
-    name: 'Ember Torch',
+    name: 'Shockwave Band',
     description:
-      'Three flames orbit the knight, burning anything that ventures into melee range.',
-    role: 'Zone control — locks down melee clusters around the hero.',
-    cost: 35,
-    icon: '🔥',
+      'A resonant bracer that releases a thunderous ripple whenever you land a hit, softening entire packs at once.',
+    role: 'Area control — splashes damage around your primary target.',
+    cost: 55,
+    icon: '💥',
     unique: true,
     category: 'weapon',
-    evolveRequirement: { type: 'rescues', count: 3, label: 'Village rescues' },
-    evolution: {
-      name: 'Inferno Ring',
-      description: 'Expands the orbit, increases burn damage, and brands enemies with lingering fire.'
-    },
-    buildPaths: [
-      'Layer with Knightblade for an aggressive melee bruiser setup.',
-      'Guard choke points with traps while flames mop up stragglers.'
-    ]
+    stats: ['Splash radius: 55', 'Splash hits deal 60% of base click damage'],
+    clickEffects: [{ type: 'splash', radius: 55, damageScale: 0.6 }]
   },
   crossbowCharm: {
     id: 'crossbowCharm',
-    name: 'Crossbow Charm',
+    name: 'Clockwork Familiar',
     description:
-      'Summons an ethereal arbalest that stalks the nearest target with precise bolts.',
-    role: 'Precision ranged — excels at sniping elite threats before they reach your lines.',
+      'A mechanical sparrow that mimics your strikes, pecking at foes even while you reposition.',
+    role: 'Automation — provides steady passive clicks between manual bursts.',
     cost: 70,
-    icon: '🏹',
+    icon: '🕰️',
     unique: true,
     category: 'weapon',
-    evolveRequirement: { type: 'kills', count: 35, label: 'Charm kills' },
-    evolution: {
-      name: 'Repeating Arbalest',
-      description: 'Fires twin piercing bolts and shortens the reload for relentless boss pressure.'
-    },
-    buildPaths: [
-      'Anchor a pure ranged kit with Throwing Knives for crossfire coverage.',
-      'Combine with Smoke Bomb Satchel to slow enemies into its firing lane.'
-    ]
+    stats: ['Auto-click every 0.8s', 'Auto-clicks deal 80% of base damage'],
+    clickEffects: [{ type: 'auto', damageScale: 0.8, interval: 0.8 }]
   },
   smokeBombSatchel: {
     id: 'smokeBombSatchel',
-    name: 'Smoke Bomb Satchel',
+    name: 'Frost Reliquary',
     description:
-      'Deploys periodic smoke clouds that slow pursuers and break line of sight.',
-    role: 'Control & traps — manipulates patrols and protects objective play.',
-    cost: 45,
-    icon: '💨',
+      'A crystal reliquary that chills through contact. Each click leaves foes brittle and sluggish.',
+    role: 'Crowd control — freezes targets after repeated hits.',
+    cost: 60,
+    icon: '❄️',
     unique: true,
     category: 'weapon',
-    evolveRequirement: { type: 'rescues', count: 4, label: 'Rescued villagers' },
-    evolution: {
-      name: 'Cloak Field Weave',
-      description: 'Creates larger, longer-lasting fields that grant brief invisibility and stronger slows.'
-    },
-    buildPaths: [
-      'Layer traps with Spike structures for a denial-heavy defense.',
-      'Pair with ranged weapons so slowed enemies stay inside damage zones.'
-    ]
+    stats: ['Freezes targets to 35% speed', 'Freeze duration: 1.2s'],
+    clickEffects: [{ type: 'freeze', factor: 0.35, duration: 1.2 }]
   }
 };
 

@@ -26,9 +26,12 @@ import {
   HP_BAR_WIDTH,
   HUD_COLOR,
   KNIGHT_BOW_NOISE,
+  CLICK_BASE_DAMAGE,
+  CLICK_TARGET_RADIUS,
+  CLICK_NOISE_STRENGTH,
+  AUTO_CLICK_NOISE_STRENGTH,
   KNIGHT_HP,
   KNIGHT_SIZE,
-  KNIGHT_SPEED_BOOST_MULTIPLIER,
   LURE_BEACON_NOISE_INTERVAL,
   LURE_BEACON_NOISE_STRENGTH,
   MAX_UNITS,
@@ -124,6 +127,7 @@ import {
   isKnightWithinConstructionRange
 } from './entities/building';
 import { Knight } from './entities/knight';
+import { ClickModifierSystem, type ClickHitContext } from './entities/clickModifiers';
 import { Seal } from './entities/seal';
 import { Vector2 } from './math/vector2';
 import { World } from './world';
@@ -499,6 +503,8 @@ export class Game {
   private ownedItems: Set<ItemId> = new Set();
   private weaponStates: Map<ItemId, WeaponRuntimeState> = new Map();
   private supportItems: Set<ItemId> = new Set();
+  private clickModifiers: ClickModifierSystem;
+  private persistentItemIds: Set<ItemId> = new Set();
   private phase: GamePhase = 'downtime';
   private phaseTimer = DOWNTIME_DURATION;
   private waveIndex = 0;
@@ -542,6 +548,21 @@ export class Game {
     this.anchors = this._generateAnchors();
     this.seals = this._generateSeals();
     this.shieldWasActive = this._isShieldActive();
+    this.clickModifiers = new ClickModifierSystem(
+      {
+        findPrimaryTarget: (position, radius) => this._findNearestUnitToPoint(position, radius),
+        findUnitsInRadius: (position, radius) => this._findUnitsInRadius(position, radius),
+        getRandomTarget: () => this._getRandomAliveUnit(),
+        baseDamage: () => this._getClickDamage(),
+        onHit: (target, damage, context) => this._handleClickHit(target, damage, context),
+        emitNoise: (position, strength) => this._emitNoise(position, strength)
+      },
+      {
+        manualNoise: CLICK_NOISE_STRENGTH,
+        autoNoise: AUTO_CLICK_NOISE_STRENGTH,
+        targetRadius: CLICK_TARGET_RADIUS
+      }
+    );
     this.world.setBuildingObstacles([]);
     this._initializeQuestGivers();
     this._initializeKnightLoadout();
@@ -633,6 +654,17 @@ export class Game {
     return Array.from(this.ownedItems);
   }
 
+  setPersistentItems(items: ItemId[]): void {
+    this.persistentItemIds = new Set(items);
+    this._applyPersistentItems();
+  }
+
+  addPersistentItem(itemId: ItemId): void {
+    if (!this.persistentItemIds.has(itemId)) {
+      this.persistentItemIds.add(itemId);
+    }
+  }
+
   getHeroLoadout(): HeroLoadoutEntry[] {
     const entries: HeroLoadoutEntry[] = [];
     for (const itemId of this.ownedItems) {
@@ -640,6 +672,7 @@ export class Game {
       if (!definition) {
         continue;
       }
+      const isClickModifier = this._isClickModifier(itemId);
       const entry: HeroLoadoutEntry = {
         id: itemId,
         name: definition.name,
@@ -649,7 +682,7 @@ export class Game {
         evolved: false,
         category: definition.category
       };
-      if (definition.category === 'weapon') {
+      if (definition.category === 'weapon' && !isClickModifier) {
         const state = this.weaponStates.get(itemId);
         const requirement = definition.evolveRequirement;
         if (requirement) {
@@ -679,7 +712,7 @@ export class Game {
           entry.evolved = !!state?.evolved;
         }
       } else {
-        entry.status = 'Passive';
+        entry.status = isClickModifier ? 'Click modifier' : 'Passive';
       }
       entries.push(entry);
     }
@@ -1209,6 +1242,7 @@ export class Game {
     }
 
     this.knight.setTarget(point.clone());
+    this.clickModifiers.handleClick(point.clone());
 
     if (typeof timeSeconds === 'number') {
       this.lastPointerTime = timeSeconds;
@@ -1322,8 +1356,8 @@ export class Game {
     }
 
     this._updateWeapons(dt);
-    this.units = this.units.filter((unit) => unit.alive);
-    this._syncUnitLookup();
+    this.clickModifiers.update(dt);
+    this._pruneDeadUnits();
 
     this._updateBuildings(dt);
     this._updateDismantle(dt);
@@ -1369,8 +1403,7 @@ export class Game {
         if (kills > 0) {
           this._emitNoise(this.knight.pos, NOISE_ATTACK_STRENGTH);
         }
-        this.units = this.units.filter((unit) => unit.alive);
-        this._syncUnitLookup();
+        this._pruneDeadUnits();
       }
     }
 
@@ -2439,6 +2472,86 @@ export class Game {
     return nearest;
   }
 
+  private _findNearestUnitToPoint(position: Vector2, radius: number): DarkUnit | null {
+    let nearest: DarkUnit | null = null;
+    let nearestDist = radius;
+    for (const unit of this.units) {
+      if (!unit.alive) {
+        continue;
+      }
+      const distance = unit.pos.distanceTo(position);
+      if (distance > radius || distance >= nearestDist) {
+        continue;
+      }
+      nearest = unit;
+      nearestDist = distance;
+    }
+    return nearest;
+  }
+
+  private _findUnitsInRadius(position: Vector2, radius: number): DarkUnit[] {
+    if (radius <= 0) {
+      return [];
+    }
+    const results: DarkUnit[] = [];
+    for (const unit of this.units) {
+      if (!unit.alive) {
+        continue;
+      }
+      if (unit.pos.distanceTo(position) <= radius) {
+        results.push(unit);
+      }
+    }
+    return results;
+  }
+
+  private _getRandomAliveUnit(): DarkUnit | null {
+    const alive = this.units.filter((unit) => unit.alive);
+    if (!alive.length) {
+      return null;
+    }
+    const index = Math.floor(Math.random() * alive.length);
+    return alive[index] ?? null;
+  }
+
+  private _getClickDamage(): number {
+    return CLICK_BASE_DAMAGE * (1 + this.weaponDamageBonus);
+  }
+
+  private _handleClickHit(target: DarkUnit, damage: number, context: ClickHitContext): void {
+    if (!target.alive || damage <= 0) {
+      return;
+    }
+    const preHp = target.hp;
+    target.takeDamage(damage);
+    const dealt = Math.max(0, preHp - target.hp);
+    if (dealt <= 0) {
+      return;
+    }
+    const strong = !target.alive;
+    const color = context.crit ? '#fde68a' : undefined;
+    this._spawnHitFlash(target.pos, target.getCollisionRadius(), { strong });
+    this._spawnDamageNumber(target.pos, dealt, { emphasis: context.crit || strong, color });
+    if (context.burn && target.alive) {
+      target.applyDot(context.burn.dps, context.burn.duration);
+    }
+    if (context.freeze && target.alive) {
+      target.applySlow(context.freeze.factor, context.freeze.duration);
+    }
+    if (!target.alive) {
+      this._onUnitKilled(target);
+    }
+    this._pruneDeadUnits();
+  }
+
+  private _pruneDeadUnits(): void {
+    if (!this.units.length) {
+      return;
+    }
+    this.units = this.units.filter((unit) => unit.alive);
+    this._syncUnitLookup();
+  }
+
   private _rotateVector(vector: Vector2, angle: number): Vector2 {
     if (angle === 0) {
       return vector.clone();
@@ -2994,7 +3107,26 @@ export class Game {
     this.knightProjectiles = [];
     this.knightProjectileIdCounter = 1;
     this.knight.setTemporarySpeedMultiplier(1);
+    this.clickModifiers.reset();
     this._grantItem('steelSword');
+    this._applyPersistentItems();
+  }
+
+  private _applyPersistentItems(): void {
+    if (!this.persistentItemIds.size) {
+      return;
+    }
+    for (const itemId of this.persistentItemIds) {
+      if (itemId === 'steelSword') {
+        continue;
+      }
+      this._grantItem(itemId);
+    }
+  }
+
+  private _isClickModifier(itemId: ItemId): boolean {
+    const definition = ITEM_DEFINITIONS[itemId];
+    return !!definition?.clickEffects && definition.clickEffects.length > 0;
   }
 
   private _grantItem(itemId: ItemId): void {
@@ -3005,8 +3137,9 @@ export class Game {
     if (definition.unique && this.ownedItems.has(itemId)) {
       return;
     }
+    const isClickModifier = this._isClickModifier(itemId);
     this.ownedItems.add(itemId);
-    if (definition.category === 'weapon' && !this.weaponStates.has(itemId)) {
+    if (definition.category === 'weapon' && !isClickModifier && !this.weaponStates.has(itemId)) {
       this.weaponStates.set(itemId, {
         id: itemId,
         cooldown: 0,
@@ -3016,8 +3149,13 @@ export class Game {
         data: {}
       });
     }
-    if (definition.category === 'support') {
+    if (definition.category === 'support' || isClickModifier) {
       this.supportItems.add(itemId);
+    }
+    if (definition.clickEffects) {
+      for (const effect of definition.clickEffects) {
+        this.clickModifiers.addEffect(effect);
+      }
     }
     this._applyItemEffect(itemId);
   }
@@ -3026,14 +3164,6 @@ export class Game {
     switch (itemId) {
       case 'steelSword':
         this.knight.equipMeleeWeapon();
-        break;
-      case 'scoutBoots':
-        this.knight.addSpeedMultiplier(KNIGHT_SPEED_BOOST_MULTIPLIER);
-        this.rescueMasteryBonus += 1;
-        break;
-      case 'hunterJerky':
-        this.weaponDamageBonus += 0.2;
-        this.killMasteryBonus += 0.25;
         break;
       default:
         break;
@@ -3204,7 +3334,7 @@ export class Game {
       this._removeBuildingsById(removals);
     }
 
-    this.units = this.units.filter((unit) => unit.alive);
+    this._pruneDeadUnits();
   }
 
   private _updateDismantle(dt: number): void {
@@ -3278,7 +3408,7 @@ export class Game {
         }
         if (wasAlive && !hitUnit.alive) {
           this._onUnitKilled(hitUnit);
-          this.units = this.units.filter((unit) => unit.alive);
+          this._pruneDeadUnits();
         }
         continue;
       }
@@ -3906,7 +4036,7 @@ export class Game {
         if (wasAlive && !unit.alive) {
           this._onUnitKilled(unit);
         }
-        this.units = this.units.filter((candidate) => candidate.alive);
+        this._pruneDeadUnits();
         building.data.used = true;
         return true;
       }

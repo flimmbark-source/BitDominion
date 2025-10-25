@@ -814,9 +814,10 @@ body {
 .shop-button {
   width: 100%;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 12px;
   border-radius: 8px;
   background: #4a3a2a;
   border: 1px solid #7a5c4b;
@@ -826,10 +827,39 @@ body {
   transition: background 0.2s ease-out, transform 0.15s ease-out;
 }
 
+.shop-button-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shop-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
 .shop-button-label {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.shop-item-stats {
+  margin: 0;
+  padding-left: 20px;
+  color: #d1d5db;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.shop-item-stats li {
+  margin-bottom: 4px;
+}
+
+.shop-item-stats li:last-child {
+  margin-bottom: 0;
 }
 
 .shop-item-icon {

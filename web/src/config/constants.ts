@@ -46,6 +46,11 @@ export const KNIGHT_BOW_DAMAGE = 1;
 export const KNIGHT_BOW_NOISE = 8;
 export const KNIGHT_BOW_COOLDOWN_MULTIPLIER = 0.7;
 
+export const CLICK_BASE_DAMAGE = 1.5;
+export const CLICK_TARGET_RADIUS = 38;
+export const CLICK_NOISE_STRENGTH = 6;
+export const AUTO_CLICK_NOISE_STRENGTH = 3.5;
+
 export const MELEE_RANGE = 32;
 export const ARC_WIDTH_DEG = 100;
 export const SWING_DURATION = 0.4;

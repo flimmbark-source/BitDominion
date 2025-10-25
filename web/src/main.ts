@@ -554,6 +554,39 @@ updateGameViewportSize();
 const game = new Game();
 game.setCanvasHudEnabled(false);
 
+const CLICK_UPGRADES_STORAGE_KEY = 'bitdominion_click_upgrades';
+
+function loadPersistentClickUpgrades(): ItemId[] {
+  try {
+    const raw = window.localStorage.getItem(CLICK_UPGRADES_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((value: unknown): value is ItemId =>
+      typeof value === 'string' && value in ITEM_DEFINITIONS
+    );
+  } catch (error) {
+    console.warn('Unable to load click modifiers from storage', error);
+    return [];
+  }
+}
+
+function savePersistentClickUpgrades(ids: Iterable<ItemId>): void {
+  try {
+    const unique = Array.from(new Set(ids));
+    window.localStorage.setItem(CLICK_UPGRADES_STORAGE_KEY, JSON.stringify(unique));
+  } catch (error) {
+    console.warn('Unable to persist click modifiers', error);
+  }
+}
+
+const persistentClickItems = new Set<ItemId>(loadPersistentClickUpgrades());
+game.setPersistentItems([...persistentClickItems]);
+
 let isoTransform = createIsoTransform(canvas.width, canvas.height);
 
 function updateIsoProjection(): void {
@@ -948,10 +981,10 @@ function openItemDetail(itemId: ItemId, options?: ItemDetailOptions): void {
   }
 
   itemDetailTips.innerHTML = '';
-  if (definition.buildPaths.length) {
-    for (const tip of definition.buildPaths) {
+  if (definition.stats.length) {
+    for (const stat of definition.stats) {
       const li = document.createElement('li');
-      li.textContent = tip;
+      li.textContent = stat;
       itemDetailTips.appendChild(li);
     }
     itemDetailTipsSection.classList.remove('hidden');
@@ -1668,7 +1701,12 @@ function populateItemShop(): void {
     const definition = ITEM_DEFINITIONS[itemId];
     const button = document.createElement('button');
     button.className = 'shop-button';
-    const label = document.createElement('span');
+    button.type = 'button';
+    const content = document.createElement('div');
+    content.className = 'shop-button-content';
+    const header = document.createElement('div');
+    header.className = 'shop-item-header';
+    const label = document.createElement('div');
     label.className = 'shop-button-label';
     const icon = document.createElement('span');
     icon.className = 'shop-item-icon';
@@ -1682,9 +1720,26 @@ function populateItemShop(): void {
     label.append(icon, name);
     const price = document.createElement('span');
     price.className = 'price';
-    button.append(label, price);
+    header.append(label, price);
+    content.append(header);
+
+    if (definition.stats.length) {
+      const statsList = document.createElement('ul');
+      statsList.className = 'shop-item-stats';
+      for (const stat of definition.stats) {
+        const li = document.createElement('li');
+        li.textContent = stat;
+        statsList.appendChild(li);
+      }
+      content.append(statsList);
+    }
+
+    button.append(content);
     button.addEventListener('click', () => {
       if (game.purchaseItem(itemId)) {
+        persistentClickItems.add(itemId);
+        game.addPersistentItem(itemId);
+        savePersistentClickUpgrades(persistentClickItems);
         updateItemShopButtons();
       }
     });
