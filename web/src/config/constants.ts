@@ -2,9 +2,9 @@ import { Vector2 } from '../math/vector2';
 import { hexToRgb } from '../utils/color';
 
 export const VIEWPORT_WIDTH = 3200;
-export const WIDTH = 1600;
+export const WIDTH = 1100;
 export const VIEWPORT_HEIGHT = 1600;
-export const WORLD_HEIGHT = 1600;
+export const WORLD_HEIGHT = 1100;
 export const HEIGHT = WORLD_HEIGHT;
 export const FPS = 60;
 

@@ -610,8 +610,8 @@ const persistentClickItems = new Set<ItemId>(loadPersistentClickUpgrades());
 game.setPersistentItems([...persistentClickItems]);
 
 const MIN_CAMERA_ZOOM = 0.6;
-const MAX_CAMERA_ZOOM = 1.8;
-const DEFAULT_CAMERA_ZOOM = 1.2;
+const MAX_CAMERA_ZOOM = 3.0;
+const DEFAULT_CAMERA_ZOOM = 2.1;
 let cameraZoom = DEFAULT_CAMERA_ZOOM;
 
 function clamp(value: number, min: number, max: number): number {
