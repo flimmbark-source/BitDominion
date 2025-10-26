@@ -146,6 +146,114 @@ import {
 import { Economy } from './game/economy/Economy';
 import { QuestSystem, type QuestHudInfo } from './game/quests/QuestSystem';
 
+interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
+interface HslColor {
+  h: number;
+  s: number;
+  l: number;
+}
+
+function hexToRgb(hex: string): RgbColor {
+  const normalized = hex.replace('#', '');
+  if (normalized.length === 3) {
+    const r = parseInt(normalized[0] + normalized[0], 16);
+    const g = parseInt(normalized[1] + normalized[1], 16);
+    const b = parseInt(normalized[2] + normalized[2], 16);
+    return { r, g, b };
+  }
+  const r = parseInt(normalized.slice(0, 2), 16);
+  const g = parseInt(normalized.slice(2, 4), 16);
+  const b = parseInt(normalized.slice(4, 6), 16);
+  return { r, g, b };
+}
+
+const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+
+function rgbToHsl(color: RgbColor): HslColor {
+  const r = color.r / 255;
+  const g = color.g / 255;
+  const b = color.b / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r:
+        h = (g - b) / d + (g < b ? 6 : 0);
+        break;
+      case g:
+        h = (b - r) / d + 2;
+        break;
+      default:
+        h = (r - g) / d + 4;
+        break;
+    }
+    h /= 6;
+  }
+
+  return { h, s, l };
+}
+
+function hslToRgb(color: HslColor): RgbColor {
+  const { h, s, l } = color;
+  if (s === 0) {
+    const value = Math.round(l * 255);
+    return { r: value, g: value, b: value };
+  }
+
+  const hueToRgb = (p: number, q: number, t: number): number => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+
+  const r = Math.round(hueToRgb(p, q, h + 1 / 3) * 255);
+  const g = Math.round(hueToRgb(p, q, h) * 255);
+  const b = Math.round(hueToRgb(p, q, h - 1 / 3) * 255);
+
+  return { r, g, b };
+}
+
+function shadeColor(color: RgbColor, factor: number): RgbColor {
+  const { h, s, l } = rgbToHsl(color);
+  return hslToRgb({ h, s, l: clamp01(l * factor) });
+}
+
+function lightenColor(color: RgbColor, amount: number): RgbColor {
+  const { h, s, l } = rgbToHsl(color);
+  return hslToRgb({ h, s, l: clamp01(l + amount * (1 - l)) });
+}
+
+function rgbToCss(color: RgbColor): string {
+  const clampChannel = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
+  const r = clampChannel(color.r);
+  const g = clampChannel(color.g);
+  const b = clampChannel(color.b);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+const WATCHTOWER_BASE_COLOR = hexToRgb('#6D6D75');
+const BARRICADE_BASE_COLOR = hexToRgb('#8C5B32');
+const SPIKE_BASE_COLOR = hexToRgb('#1E1E24');
+const WORKSHOP_BASE_COLOR = hexToRgb('#3A3A42');
+
 export interface CameraState {
   viewportWidth: number;
   viewportHeight: number;
@@ -3231,8 +3339,11 @@ export class Game {
       g: Math.min(255, CASTLE_COLOR_DEC.g + pulse * 40),
       b: Math.min(255, CASTLE_COLOR_DEC.b + pulse * 40)
     };
-    ctx.fillStyle = `rgb(${color.r.toFixed(0)}, ${color.g.toFixed(0)}, ${color.b.toFixed(0)})`;
-    ctx.fillRect(CASTLE_POS.x - size / 2, CASTLE_POS.y - size / 2, size, size);
+    this._drawIsoPrism(ctx, CASTLE_POS, size / 2, size / 2, color, {
+      depth: size * 0.45,
+      rightShadeFactor: 0.82,
+      frontShadeFactor: 0.65
+    });
   }
 
   private _drawBuildings(ctx: CanvasRenderingContext2D): void {
@@ -3250,11 +3361,11 @@ export class Game {
       } else {
         switch (building.type) {
           case 'watchtower': {
-            ctx.fillStyle = '#6D6D75';
-            ctx.fillRect(x, y, halfWidth * 2, halfHeight * 2);
+            this._drawIsoPrism(ctx, building.position, halfWidth, halfHeight, WATCHTOWER_BASE_COLOR);
             const blink = Math.sin(performance.now() / 180) > 0 ? '#FFFFFF' : '#D0D0FF';
             ctx.fillStyle = blink;
-            ctx.fillRect(building.position.x - 1, building.position.y - halfHeight - 1, 2, 2);
+            const topApexY = building.position.y - halfHeight;
+            ctx.fillRect(building.position.x - 1, topApexY - 1, 2, 2);
             if (building.auraMultiplier > 1) {
               ctx.strokeStyle = 'rgba(120, 190, 255, 0.6)';
               ctx.lineWidth = 1.5;
@@ -3265,12 +3376,10 @@ export class Game {
             break;
           }
           case 'barricade':
-            ctx.fillStyle = '#8C5B32';
-            ctx.fillRect(x, y, halfWidth * 2, halfHeight * 2);
+            this._drawIsoPrism(ctx, building.position, halfWidth, halfHeight, BARRICADE_BASE_COLOR);
             break;
           case 'spike':
-            ctx.fillStyle = '#1E1E24';
-            ctx.fillRect(x, y, halfWidth * 2, halfHeight * 2);
+            this._drawIsoPrism(ctx, building.position, halfWidth, halfHeight, SPIKE_BASE_COLOR);
             break;
           case 'beacon': {
             const pulse = 0.4 + 0.3 * (Math.sin(performance.now() / 160) + 1) * 0.5;
@@ -3281,8 +3390,7 @@ export class Game {
             break;
           }
           case 'workshop':
-            ctx.fillStyle = '#3A3A42';
-            ctx.fillRect(x, y, halfWidth * 2, halfHeight * 2);
+            this._drawIsoPrism(ctx, building.position, halfWidth, halfHeight, WORKSHOP_BASE_COLOR);
             ctx.fillStyle = '#555566';
             ctx.fillRect(building.position.x - 2, building.position.y - 2, 4, 4);
             break;
@@ -3345,6 +3453,136 @@ export class Game {
         }
       }
     }
+  }
+
+  private _drawIsoPrism(
+    ctx: CanvasRenderingContext2D,
+    center: Vector2,
+    halfWidth: number,
+    halfHeight: number,
+    baseColor: RgbColor,
+    options?: { depth?: number; rightShadeFactor?: number; frontShadeFactor?: number }
+  ): void {
+    const northWest = { x: center.x - halfWidth, y: center.y - halfHeight };
+    const northEast = { x: center.x + halfWidth, y: center.y - halfHeight };
+    const southEast = { x: center.x + halfWidth, y: center.y + halfHeight };
+    const southWest = { x: center.x - halfWidth, y: center.y + halfHeight };
+
+    const depth = options?.depth ?? Math.max(halfWidth, halfHeight) * 0.6;
+    const dropPoint = (point: { x: number; y: number }) => ({ x: point.x + depth, y: point.y + depth });
+
+    const northEastDrop = dropPoint(northEast);
+    const southEastDrop = dropPoint(southEast);
+    const southWestDrop = dropPoint(southWest);
+
+    ctx.beginPath();
+    ctx.moveTo(northWest.x, northWest.y);
+    ctx.lineTo(northEast.x, northEast.y);
+    ctx.lineTo(southEast.x, southEast.y);
+    ctx.lineTo(southWest.x, southWest.y);
+    ctx.closePath();
+    ctx.fillStyle = rgbToCss(baseColor);
+    ctx.fill();
+
+    const topShadowOffset = depth * 0.18;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(northWest.x, northWest.y);
+    ctx.lineTo(northEast.x, northEast.y);
+    ctx.lineTo(southEast.x, southEast.y);
+    ctx.lineTo(southWest.x, southWest.y);
+    ctx.closePath();
+    ctx.clip();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+    ctx.beginPath();
+    ctx.moveTo(northWest.x + topShadowOffset, northWest.y + topShadowOffset);
+    ctx.lineTo(northEast.x + topShadowOffset, northEast.y + topShadowOffset);
+    ctx.lineTo(southEast.x + topShadowOffset, southEast.y + topShadowOffset);
+    ctx.lineTo(southWest.x + topShadowOffset, southWest.y + topShadowOffset);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    const initialLineCap = ctx.lineCap;
+    ctx.lineCap = 'round';
+    const highlightStroke = rgbToCss(lightenColor(baseColor, 0.35));
+    ctx.strokeStyle = highlightStroke;
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(northWest.x, northWest.y);
+    ctx.lineTo(northEast.x, northEast.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(northWest.x, northWest.y);
+    ctx.lineTo(southWest.x, southWest.y);
+    ctx.stroke();
+
+    const rightShadeFactor = options?.rightShadeFactor ?? 0.85;
+    const rightShade = shadeColor(baseColor, rightShadeFactor);
+    ctx.beginPath();
+    ctx.moveTo(northEast.x, northEast.y);
+    ctx.lineTo(southEast.x, southEast.y);
+    ctx.lineTo(southEastDrop.x, southEastDrop.y);
+    ctx.lineTo(northEastDrop.x, northEastDrop.y);
+    ctx.closePath();
+    ctx.fillStyle = rgbToCss(rightShade);
+    ctx.fill();
+
+    const faceShadowOffset = depth * 0.16;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(northEast.x, northEast.y);
+    ctx.lineTo(southEast.x, southEast.y);
+    ctx.lineTo(southEastDrop.x, southEastDrop.y);
+    ctx.lineTo(northEastDrop.x, northEastDrop.y);
+    ctx.closePath();
+    ctx.clip();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+    ctx.beginPath();
+    ctx.moveTo(northEast.x + faceShadowOffset, northEast.y + faceShadowOffset);
+    ctx.lineTo(southEast.x + faceShadowOffset, southEast.y + faceShadowOffset);
+    ctx.lineTo(southEastDrop.x + faceShadowOffset, southEastDrop.y + faceShadowOffset);
+    ctx.lineTo(northEastDrop.x + faceShadowOffset, northEastDrop.y + faceShadowOffset);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    const frontShadeFactor = options?.frontShadeFactor ?? 0.7;
+    const frontShade = shadeColor(baseColor, frontShadeFactor);
+    ctx.beginPath();
+    ctx.moveTo(southEast.x, southEast.y);
+    ctx.lineTo(southWest.x, southWest.y);
+    ctx.lineTo(southWestDrop.x, southWestDrop.y);
+    ctx.lineTo(southEastDrop.x, southEastDrop.y);
+    ctx.closePath();
+    ctx.fillStyle = rgbToCss(frontShade);
+    ctx.fill();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(southEast.x, southEast.y);
+    ctx.lineTo(southWest.x, southWest.y);
+    ctx.lineTo(southWestDrop.x, southWestDrop.y);
+    ctx.lineTo(southEastDrop.x, southEastDrop.y);
+    ctx.closePath();
+    ctx.clip();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+    ctx.beginPath();
+    ctx.moveTo(southEast.x + faceShadowOffset, southEast.y + faceShadowOffset);
+    ctx.lineTo(southWest.x + faceShadowOffset, southWest.y + faceShadowOffset);
+    ctx.lineTo(southWestDrop.x + faceShadowOffset, southWestDrop.y + faceShadowOffset);
+    ctx.lineTo(southEastDrop.x + faceShadowOffset, southEastDrop.y + faceShadowOffset);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    ctx.strokeStyle = highlightStroke;
+    ctx.lineWidth = 1.05;
+    ctx.beginPath();
+    ctx.moveTo(southWest.x, southWest.y);
+    ctx.lineTo(southWestDrop.x, southWestDrop.y);
+    ctx.stroke();
+    ctx.lineCap = initialLineCap;
   }
 
   private _drawSurgeEnemies(ctx: CanvasRenderingContext2D): void {
