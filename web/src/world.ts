@@ -36,6 +36,108 @@ import {
 } from './config/constants';
 import { Vector2 } from './math/vector2';
 
+interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
+interface HslColor {
+  h: number;
+  s: number;
+  l: number;
+}
+
+const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+
+function hexToRgb(hex: string): RgbColor {
+  const normalized = hex.replace('#', '');
+  if (normalized.length === 3) {
+    const r = parseInt(normalized[0] + normalized[0], 16);
+    const g = parseInt(normalized[1] + normalized[1], 16);
+    const b = parseInt(normalized[2] + normalized[2], 16);
+    return { r, g, b };
+  }
+  const r = parseInt(normalized.slice(0, 2), 16);
+  const g = parseInt(normalized.slice(2, 4), 16);
+  const b = parseInt(normalized.slice(4, 6), 16);
+  return { r, g, b };
+}
+
+function rgbToHsl(color: RgbColor): HslColor {
+  const r = color.r / 255;
+  const g = color.g / 255;
+  const b = color.b / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r:
+        h = (g - b) / d + (g < b ? 6 : 0);
+        break;
+      case g:
+        h = (b - r) / d + 2;
+        break;
+      default:
+        h = (r - g) / d + 4;
+        break;
+    }
+    h /= 6;
+  }
+
+  return { h, s, l };
+}
+
+function hslToRgb(color: HslColor): RgbColor {
+  const { h, s, l } = color;
+  if (s === 0) {
+    const value = Math.round(l * 255);
+    return { r: value, g: value, b: value };
+  }
+
+  const hueToRgb = (p: number, q: number, t: number): number => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+
+  const r = Math.round(hueToRgb(p, q, h + 1 / 3) * 255);
+  const g = Math.round(hueToRgb(p, q, h) * 255);
+  const b = Math.round(hueToRgb(p, q, h - 1 / 3) * 255);
+
+  return { r, g, b };
+}
+
+function lightenColor(color: RgbColor, amount: number): RgbColor {
+  const { h, s, l } = rgbToHsl(color);
+  const nextL = clamp01(l + amount * (1 - l));
+  return hslToRgb({ h, s, l: nextL });
+}
+
+function darkenColor(color: RgbColor, amount: number): RgbColor {
+  const { h, s, l } = rgbToHsl(color);
+  const nextL = clamp01(l * (1 - amount));
+  return hslToRgb({ h, s, l: nextL });
+}
+
+function rgbToCss(color: RgbColor): string {
+  const clamp = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
+  return `rgb(${clamp(color.r)}, ${clamp(color.g)}, ${clamp(color.b)})`;
+}
+
 import type { DarkUnit } from './entities/darkUnit';
 import type { Knight } from './entities/knight';
 
@@ -58,6 +160,17 @@ export interface Chest {
 }
 
 type VillagerState = 'idle' | 'alert' | 'flee';
+
+const TREE_BASE_RGB = hexToRgb(TREE_COLOR);
+const HUT_FILL_RGB = hexToRgb(HUT_FILL_COLOR);
+const CHEST_OPEN_RGB = hexToRgb(CHEST_OPEN_COLOR);
+const CHEST_CLOSED_RGB = hexToRgb(CHEST_CLOSED_COLOR);
+
+const VILLAGER_STATE_BASE_COLORS: Record<VillagerState, RgbColor> = {
+  idle: hexToRgb(VILLAGER_IDLE_COLOR),
+  alert: hexToRgb(VILLAGER_ALERT_COLOR),
+  flee: hexToRgb(VILLAGER_FLEE_COLOR)
+};
 
 export interface Villager {
   pos: Vector2;
@@ -1261,12 +1374,51 @@ export class World {
 
   private drawHuts(ctx: CanvasRenderingContext2D): void {
     ctx.save();
-    ctx.fillStyle = HUT_FILL_COLOR;
     for (const hut of this.huts) {
       const width = hut.width * ISO_VILLAGE_SCALE;
       const height = hut.height * ISO_VILLAGE_SCALE;
-      ctx.fillRect(hut.center.x - width / 2, hut.center.y - height / 2, width, height);
+      const left = hut.center.x - width / 2;
+      const top = hut.center.y - height / 2;
+      const gradient = ctx.createLinearGradient(left, top, left, top + height);
+      gradient.addColorStop(0, rgbToCss(lightenColor(HUT_FILL_RGB, 0.3)));
+      gradient.addColorStop(0.55, rgbToCss(lightenColor(HUT_FILL_RGB, 0.05)));
+      gradient.addColorStop(1, rgbToCss(darkenColor(HUT_FILL_RGB, 0.35)));
+      ctx.fillStyle = gradient;
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.22)';
+      ctx.shadowBlur = Math.max(width, height) * 0.35;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = height * 0.2;
+      ctx.fillRect(left, top, width, height);
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+
+      const hutShadowOffsetX = width * 0.2;
+      const hutShadowOffsetY = height * 0.18;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(left, top, width, height);
+      ctx.clip();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+      ctx.fillRect(left + hutShadowOffsetX, top + hutShadowOffsetY, width, height);
+      ctx.restore();
+
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = HUT_OUTLINE_COLOR;
+      ctx.strokeRect(left + 0.6, top + 0.6, width - 1.2, height - 1.2);
+
+      const hutHighlight = rgbToCss(lightenColor(HUT_FILL_RGB, 0.55));
+      const previousLineCap = ctx.lineCap;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = hutHighlight;
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(left + width - 1.4, top + 0.8);
+      ctx.lineTo(left + 0.8, top + 0.8);
+      ctx.lineTo(left + 0.8, top + height - 0.8);
+      ctx.stroke();
+      ctx.lineCap = previousLineCap;
     }
+    ctx.shadowColor = 'transparent';
     ctx.restore();
   }
 
@@ -1274,23 +1426,118 @@ export class World {
     ctx.save();
     for (const village of this.villages) {
       for (const chest of village.chests) {
-        ctx.fillStyle = chest.opened ? CHEST_OPEN_COLOR : CHEST_CLOSED_COLOR;
         const size = 6 * ISO_VILLAGE_SCALE;
-        ctx.fillRect(chest.position.x - size / 2, chest.position.y - size / 2, size, size);
+        const half = size / 2;
+        const left = chest.position.x - half;
+        const top = chest.position.y - half;
+        const baseColor = chest.opened ? CHEST_OPEN_RGB : CHEST_CLOSED_RGB;
+        const gradient = ctx.createLinearGradient(left, top, left, top + size);
+        gradient.addColorStop(0, rgbToCss(lightenColor(baseColor, 0.35)));
+        gradient.addColorStop(0.6, rgbToCss(baseColor));
+        gradient.addColorStop(1, rgbToCss(darkenColor(baseColor, 0.4)));
+        ctx.fillStyle = gradient;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+        ctx.shadowBlur = size * 0.6;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = size * 0.3;
+        ctx.fillRect(left, top, size, size);
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+
+        const chestShadowOffset = size * 0.22;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(left, top, size, size);
+        ctx.clip();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.17)';
+        ctx.fillRect(left + chestShadowOffset, top + chestShadowOffset, size, size);
+        ctx.restore();
+
+        ctx.lineWidth = 0.8;
+        ctx.strokeStyle = rgbToCss(darkenColor(baseColor, 0.55));
+        ctx.strokeRect(left + 0.4, top + 0.4, size - 0.8, size - 0.8);
+
+        const chestHighlight = rgbToCss(lightenColor(baseColor, 0.5));
+        const previousLineCap = ctx.lineCap;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = chestHighlight;
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        ctx.moveTo(left + size - 0.7, top + 0.7);
+        ctx.lineTo(left + 0.7, top + 0.7);
+        ctx.lineTo(left + 0.7, top + size - 0.7);
+        ctx.stroke();
+        ctx.lineCap = previousLineCap;
       }
     }
+    ctx.shadowColor = 'transparent';
     ctx.restore();
   }
 
   private drawTrees(ctx: CanvasRenderingContext2D): void {
     ctx.save();
-    ctx.fillStyle = TREE_COLOR;
     for (const tree of this.trees) {
       ctx.beginPath();
       const canopyRadius = tree.radius * 0.6 * ISO_TREE_SCALE;
+      const highlightY = tree.position.y - canopyRadius * 0.35;
+      const gradient = ctx.createRadialGradient(
+        tree.position.x,
+        highlightY,
+        canopyRadius * 0.25,
+        tree.position.x,
+        tree.position.y,
+        canopyRadius
+      );
+      gradient.addColorStop(0, rgbToCss(lightenColor(TREE_BASE_RGB, 0.4)));
+      gradient.addColorStop(0.55, rgbToCss(lightenColor(TREE_BASE_RGB, 0.1)));
+      gradient.addColorStop(1, rgbToCss(darkenColor(TREE_BASE_RGB, 0.45)));
+      ctx.fillStyle = gradient;
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
+      ctx.shadowBlur = canopyRadius * 0.85;
+      ctx.shadowOffsetX = canopyRadius * 0.1;
+      ctx.shadowOffsetY = canopyRadius * 0.35;
       ctx.arc(tree.position.x, tree.position.y, canopyRadius, 0, Math.PI * 2);
       ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+
+      const canopyShadowOffsetX = canopyRadius * 0.22;
+      const canopyShadowOffsetY = canopyRadius * 0.28;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(tree.position.x, tree.position.y, canopyRadius, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.17)';
+      ctx.beginPath();
+      ctx.arc(
+        tree.position.x + canopyShadowOffsetX,
+        tree.position.y + canopyShadowOffsetY,
+        canopyRadius,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+      ctx.restore();
+
+      const treeHighlightColor = rgbToCss(lightenColor(TREE_BASE_RGB, 0.55));
+      const previousLineCap = ctx.lineCap;
+      const previousAlpha = ctx.globalAlpha;
+      ctx.lineCap = 'round';
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = treeHighlightColor;
+      ctx.lineWidth = canopyRadius * 0.18;
+      ctx.beginPath();
+      ctx.arc(tree.position.x, tree.position.y, canopyRadius * 0.72, Math.PI * 1.15, Math.PI * 1.58);
+      ctx.stroke();
+      ctx.globalAlpha = previousAlpha;
+      ctx.lineCap = previousLineCap;
+
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = TREE_OUTLINE_COLOR;
+      ctx.stroke();
     }
+    ctx.shadowColor = 'transparent';
     ctx.restore();
   }
 
@@ -1301,19 +1548,53 @@ export class World {
         if (!villager.alive) {
           continue;
         }
-        switch (villager.state) {
-          case 'alert':
-            ctx.fillStyle = VILLAGER_ALERT_COLOR;
-            break;
-          case 'flee':
-            ctx.fillStyle = VILLAGER_FLEE_COLOR;
-            break;
-          default:
-            ctx.fillStyle = VILLAGER_IDLE_COLOR;
-            break;
-        }
         const size = 4 * ISO_VILLAGER_SCALE;
-        ctx.fillRect(villager.pos.x - size / 2, villager.pos.y - size / 2, size, size);
+        const half = size / 2;
+        const top = villager.pos.y - half;
+        const left = villager.pos.x - half;
+        const baseColor = VILLAGER_STATE_BASE_COLORS[villager.state];
+        const gradient = ctx.createLinearGradient(
+          villager.pos.x,
+          top,
+          villager.pos.x,
+          villager.pos.y + half
+        );
+        gradient.addColorStop(0, rgbToCss(lightenColor(baseColor, 0.4)));
+        gradient.addColorStop(0.58, rgbToCss(baseColor));
+        gradient.addColorStop(1, rgbToCss(darkenColor(baseColor, 0.45)));
+        ctx.fillStyle = gradient;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.28)';
+        ctx.shadowBlur = size * 0.8;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = size * 0.35;
+        ctx.fillRect(left, top, size, size);
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+
+        const villagerShadowOffset = size * 0.28;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(left, top, size, size);
+        ctx.clip();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+        ctx.fillRect(left + villagerShadowOffset, top + villagerShadowOffset, size, size);
+        ctx.restore();
+
+        ctx.lineWidth = 0.9;
+        ctx.strokeStyle = rgbToCss(darkenColor(baseColor, 0.5));
+        ctx.strokeRect(left + 0.45, top + 0.45, size - 0.9, size - 0.9);
+
+        const villagerHighlight = rgbToCss(lightenColor(baseColor, 0.55));
+        const previousLineCap = ctx.lineCap;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = villagerHighlight;
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        ctx.moveTo(left + size - 0.8, top + 0.75);
+        ctx.lineTo(left + 0.75, top + 0.75);
+        ctx.lineTo(left + 0.75, top + size - 0.75);
+        ctx.stroke();
+        ctx.lineCap = previousLineCap;
         if (villager.hurtTimer > 0) {
           const ratio = Math.min(1, villager.hurtTimer / VILLAGER_HURT_FLASH);
           ctx.globalAlpha = 0.6 * ratio;
@@ -1325,6 +1606,7 @@ export class World {
         }
       }
     }
+    ctx.shadowColor = 'transparent';
     ctx.restore();
   }
 
