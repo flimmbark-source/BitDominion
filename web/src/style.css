@@ -72,14 +72,22 @@ body {
   border-radius: 12px;
 }
 
-.dark-energy {
+.top-right-panels {
   position: absolute;
   top: 16px;
   right: 16px;
-  width: 240px;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 20;
+  pointer-events: auto;
+}
+
+.dark-energy {
+  width: 100%;
   padding: 12px 14px;
   text-align: right;
-  z-index: 20;
 }
 
 .dark-energy h2 {
