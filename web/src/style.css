@@ -377,6 +377,7 @@ body {
   align-items: flex-end;
   justify-content: flex-end;
   gap: 12px;
+  margin-right: calc(260px + 16px);
 }
 
 .hud-section--center {
@@ -393,6 +394,12 @@ body {
 .hud .build-toggle,
 .hud .hud-info-buttons {
   pointer-events: auto;
+}
+
+@media (max-width: 1200px) {
+  .hud-section--right {
+    margin-right: 0;
+  }
 }
 .stats-panel {
   width: 260px;
