@@ -274,14 +274,20 @@ appRootElement.innerHTML = `
     <div class="game-container" id="gameContainer">
       <canvas id="gameCanvas" class="game-canvas"></canvas>
       <div class="camp-marker-layer" id="campMarkerLayer"></div>
-      <div class="dark-energy ui-panel" id="darkEnergyClock">
-        <div class="panel-heading">
-          <h2>Dark Energy</h2>
-          <button class="info-button" id="downtimeInfo" type="button" aria-label="Downtime timing help">?</button>
+      <div class="top-right-panels" id="topRightPanels">
+        <div class="dark-energy ui-panel" id="darkEnergyClock">
+          <div class="panel-heading">
+            <h2>Dark Energy</h2>
+            <button class="info-button" id="downtimeInfo" type="button" aria-label="Downtime timing help">?</button>
+          </div>
+          <div class="bar"><div class="bar-fill" id="darkEnergyFill"></div></div>
+          <p id="darkEnergyText">Gathering energy…</p>
+          <div class="next-wave-timer" id="nextWaveTimer">Next wave: --</div>
         </div>
-        <div class="bar"><div class="bar-fill" id="darkEnergyFill"></div></div>
-        <p id="darkEnergyText">Gathering energy…</p>
-        <div class="next-wave-timer" id="nextWaveTimer">Next wave: --</div>
+        <div class="ui-panel buffs-panel" id="buffsPanel">
+          <div class="buffs-title">Temporary Blessings</div>
+          <ul class="buffs-list" id="buffList"></ul>
+        </div>
       </div>
       <div class="lore-banner ui-panel" id="loreBanner">
         <div class="lore-banner-header">
@@ -323,12 +329,6 @@ appRootElement.innerHTML = `
               <span class="build-toggle-text">(B)uild</span>
             </button>
             <div class="build-feedback" id="buildErrorMessage" role="status" aria-live="polite"></div>
-          </div>
-          <div class="hud-section hud-section--right">
-            <div class="ui-panel buffs-panel" id="buffsPanel">
-              <div class="buffs-title">Temporary Blessings</div>
-              <ul class="buffs-list" id="buffList"></ul>
-            </div>
           </div>
         </div>
       </div>
